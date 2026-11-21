@@ -1,0 +1,91 @@
+;; ====================================================================
+;; KeyMacros — porte do C:\repos\my-ios\ahk\main.ahk para kanata
+;;
+;; Situação atual da máquina (SharpKeys / Scancode Map no registro):
+;;   Windows esquerdo físico -> F13      (o kanata recebe f13)
+;;   Ctrl direito físico     -> Windows  (o kanata recebe lmet)
+;; Por isso a tecla líder aqui é f13.
+;;
+;; Quando quiser tirar o SharpKeys e deixar só o kanata fazer a troca,
+;; troque o bloco (deflayermap (base) ...) pelo comentado lá embaixo.
+;; ====================================================================
+
+(defcfg
+  process-unmapped-keys yes
+  windows-altgr add-lctl-release
+  ;; exigido pelas combinações (defchordsv2)
+  concurrent-tap-hold yes
+  ;; combinações ficam desligadas 150 ms após qualquer outra tecla (não dispara no meio de palavras)
+  chords-v2-min-idle 150
+)
+
+(defsrc)
+
+(defalias
+  ;; F13 sozinho continua mandando F13 (igual ao ModifierSolo do AHK);
+  ;; F13 + tecla ativa a camada de macros sem atraso.
+  lider (tap-hold-press 0 200 f13 (layer-while-held km-lider))
+  ;; Alt e Win continuam funcionando normalmente, mas ganham camadas extras.
+  alt (multi lalt (layer-while-held km-alt))
+  win (multi lmet (layer-while-held km-win))
+)
+
+(deflayermap (base)
+  f13 @lider
+  lalt @alt
+  lmet @win
+  ;; one-hand.ahk: CapsLock = Enter; Shift+CapsLock = CapsLock
+  caps (fork ret caps (lsft rsft))
+)
+
+#| Sem SharpKeys (kanata faz tudo), use esta base:
+(deflayermap (base)
+  lmet @lider
+  rctl @win
+  lalt @alt
+  caps (fork ret caps (lsft rsft))
+)
+e troque, no alias lider, "f13" por "lmet".
+|#
+
+;; F13 + tecla
+(deflayermap (km-lider)
+  c (tap-hold 0 300 (push-msg app "claude.exe" "shell:AppsFolder\Claude_pzs8sxrjxfjjc!Claude") (push-msg first (focus "wezterm-gui.exe") (focus "WindowsTerminal.exe") (focus "OpenConsole.exe") (app "wezterm-gui.exe" "%ProgramFiles%\WezTerm\wezterm-gui.exe")))
+  t (push-msg app "Telegram.exe" "%AppData%\Telegram Desktop\Telegram.exe" "prefer=(")
+  d (push-msg app "Discord.exe" "%LocalAppData%\Discord\Update.exe" "--processStart Discord.exe")
+  v (push-msg app "Code.exe" "%LocalAppData%\Programs\Microsoft VS Code\Code.exe")
+  o (push-msg app "Obsidian.exe" "%LocalAppData%\Programs\Obsidian\Obsidian.exe")
+  a (push-msg app "anki.exe" "%LocalAppData%\Programs\Anki\Anki.exe")
+  b (multi (push-msg browser) (one-shot 2000 (layer-while-held km-sites)))
+  n (push-msg app "*" "shell:AppsFolder\19282JackieLiu.Notepads-Beta_echhpq9pdbte8!App" title=Notepads class=ApplicationFrameWindow wait=3)
+  g (push-msg browser-tab "chatgpt.com|chat.openai.com" "chatgpt.com" "https://chatgpt.com")
+  e (push-msg app "explorer.exe" "%WinDir%\explorer.exe" class=CabinetWClass)
+  f (push-msg app "blender.exe" "%ProgramFiles%\Blender Foundation\Blender 5.2\blender.exe")
+  s (push-msg app "obs64.exe" "%ProgramFiles%\obs-studio\bin\64bit\obs64.exe" nomax)
+  ___ XX
+)
+
+;; Até 2s depois de F13+B (com F13 ainda segurado): U = Udemy, Y = YouTube
+(deflayermap (km-sites)
+  u (push-msg browser-tab "udemy.com" "udemy.com" "https://www.udemy.com")
+  y (push-msg browser-tab "youtube.com" "youtube.com" "https://www.youtube.com")
+)
+
+;; Alt + tecla (as do AHK exigem Ctrl+Alt; sem Ctrl a tecla sai normal)
+(deflayermap (km-alt)
+  up (fork up (push-msg topmost) (lctl rctl))
+  d (fork d (push-msg next-window "wezterm-gui.exe" "Telegram.exe" "Antigravity.exe" "Obsidian.exe" "anki.exe" "msedge.exe" "Notepads.exe" "explorer.exe" "class:CabinetWClass" "ApplicationFrameHost.exe+title:Notepads") (lctl rctl))
+  scln (fork scln (push-msg sleep-pc) (lctl rctl))
+)
+
+;; Win + tecla (o Win hoje é o Ctrl direito físico)
+(deflayermap (km-win)
+  f12 (push-msg shutdown)
+  grv (push-msg sleep-pc)
+)
+
+;; Combinações: teclas apertadas JUNTAS viram outra ação. Uma depois da outra = normal.
+;; (teclas) ação tempo-ms soltura (camadas-onde-desliga)
+(defchordsv2
+  (r t) f14 40 first-release ()
+)

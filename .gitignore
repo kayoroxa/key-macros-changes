@@ -1,0 +1,21 @@
+# Build output
+target/
+launcher/target/
+dist/
+*.exe
+*.pdb
+*.obj
+*.o
+
+# Personal/local data
+data/
+*.log
+
+# Local tools and secrets
+tools/
+.env
+.env.*
+*.key
+*.pem
+.vscode/
+.idea/

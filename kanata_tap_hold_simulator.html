@@ -1,0 +1,414 @@
+<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Tap/Hold Lab — Kanata</title><style>
+:root{color-scheme:dark;--bg:#0b1020;--panel:#141c30;--line:#29354c;--text:#edf3ff;--muted:#9aabc5;--blue:#5d92ff;--red:#ff6d7c;--green:#4cdbb1}*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 85% 0,#1c3055,transparent 40%),var(--bg);color:var(--text);font:15px system-ui,Segoe UI,sans-serif}main{max-width:1180px;margin:auto;padding:30px 20px 60px}h1{font-size:32px;letter-spacing:-1px;margin:0}h2{font-size:17px;margin:0 0 16px}.sub{color:var(--muted);margin:8px 0 26px}.grid{display:grid;grid-template-columns:350px 1fr;gap:18px}.panel{background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:22px;min-width:0}.stack{display:grid;gap:18px}label{display:block;color:#c5d3eb;font-size:13px;margin:16px 0 8px}select,input[type=number],textarea{width:100%;border:1px solid #3a4b69;background:#0c1527;color:white;border-radius:10px;padding:12px;font:inherit}input[type=range]{width:100%;accent-color:var(--blue)}.row{display:flex;align-items:center;justify-content:space-between;gap:12px}.muted{color:var(--muted)}.small{font-size:12px}.big{font-size:38px;font-weight:800;letter-spacing:-1px}.pill{padding:6px 10px;border-radius:99px;background:#263954;color:#b9d3ff;font-size:12px}.status{font-weight:700}.status.tap{color:var(--blue)}.status.hold{color:var(--red)}.status.pending{color:#ffd183}button{cursor:pointer;border:1px solid #3d5275;background:#243551;color:#eaf2ff;padding:10px 14px;border-radius:10px;font-weight:650}button:hover{background:#30496d}button.primary{background:#3368df;border-color:#487cff}button:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px solid var(--blue);outline-offset:3px}.switches{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}.switches button.active{background:#315ba7;border-color:#6498ff}.test{min-height:170px;outline:none;border:1px dashed #597196;border-radius:15px;padding:18px;background:#0d172b;white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.65;font-size:20px;position:relative}.test:empty:before{content:attr(data-placeholder);color:#657794;pointer-events:none}.test:focus{border-color:#7cafff;box-shadow:0 0 0 3px #538dff22}.test .cursor{display:inline-block;width:2px;height:1em;background:#fff;vertical-align:-3px;animation:blink 1s infinite}@keyframes blink{50%{opacity:0}}.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}.stat{background:#0d172b;padding:14px;border-radius:12px}.stat strong{display:block;font-size:24px;margin-top:4px}.stat span{font-size:11px;color:var(--muted)}.log{max-height:310px;overflow:auto;border:1px solid var(--line);border-radius:12px}.event{display:grid;grid-template-columns:78px 1fr 90px;gap:12px;padding:10px 13px;border-bottom:1px solid #26344b;font-size:13px}.event:last-child{border:0}.event b{color:#b8d4ff}.event .duration{text-align:right;font-variant-numeric:tabular-nums}.timeline{height:130px;overflow:auto;border:1px solid var(--line);border-radius:12px;padding:14px}.bar{height:18px;border-radius:5px;margin:5px 0;min-width:3px}.bar.tap{background:var(--blue)}.bar.hold{background:var(--red)}.bar.normal{background:var(--green)}.barline{display:flex;align-items:center;gap:12px;font-size:12px}.barline>span{width:48px;color:var(--muted)}.barline>div{flex:1}.note{border-left:3px solid #5e95ff;padding:10px 14px;background:#182740;color:#c4d7f5;border-radius:5px;line-height:1.55}.kbd{font-family:ui-monospace,Consolas,monospace;background:#2a3851;border:1px solid #536582;border-radius:5px;padding:2px 5px}.check{display:flex;align-items:center;gap:9px;margin:12px 0}.check input{accent-color:#5e95ff}.check label{margin:0}.foot{color:var(--muted);font-size:12px;margin-top:18px}@media(max-width:850px){.grid{grid-template-columns:1fr}.stats{grid-template-columns:repeat(2,1fr)}main{padding:20px 12px}}
+[hidden]{display:none!important}
+.tabs{display:flex;gap:6px;margin:0 0 22px;border-bottom:1px solid var(--line);overflow:auto}.tab{background:none;border:0;border-bottom:3px solid transparent;border-radius:0;padding:12px 16px;color:var(--muted);font-size:15px;white-space:nowrap}.tab:hover{background:none;color:var(--text)}.tab.active{color:var(--text);border-bottom-color:var(--blue)}
+.typing{min-height:150px;resize:vertical;font-size:18px;line-height:1.6}
+.tblwrap{overflow:auto;border:1px solid var(--line);border-radius:12px}.tbl{width:100%;border-collapse:collapse;font-size:13px}.tbl th{text-align:left;color:var(--muted);font-weight:600;padding:10px;border-bottom:1px solid var(--line);white-space:nowrap;background:#101a2e}.tbl td{padding:9px 10px;border-bottom:1px solid #26344b;white-space:nowrap}.tbl tr:last-child td{border:0}.tbl .num{font-variant-numeric:tabular-nums}.tbl button{padding:4px 9px;font-size:12px}
+.badge{padding:3px 9px;border-radius:99px;font-size:11px;font-weight:700}.b-ok{background:#14473c;color:#7ff0cc}.b-mid{background:#4a3d14;color:#ffd183}.b-bad{background:#4d1f29;color:#ff9aa6}.b-na{background:#263954;color:#9aabc5}
+.kbwrap{overflow:auto;padding:4px 0 8px}.kb{position:relative;margin:0 auto}.k{position:absolute;width:44px;height:44px;padding:0;border-radius:9px;border:1px solid #3a4b69;background:#0d172b;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;line-height:1;user-select:none}.k b{font-size:14px}.k small{font-size:9px;font-weight:500;color:#c9d6ee;min-height:9px}.k.sel{outline:2px solid #fff;outline-offset:1px}.k:hover{border-color:#9bbcff}
+.legend{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--muted);margin-top:10px}.legend i{display:inline-block;width:11px;height:11px;border-radius:3px;margin-right:5px;vertical-align:-1px}
+.live{font-variant-numeric:tabular-nums}
+.store{padding:10px 12px;border-radius:10px;font-size:13px;line-height:1.5;margin-bottom:14px;background:#263954;color:#b9d3ff}.store.ok{background:#14473c;color:#7ff0cc}.store.warn{background:#4a3d14;color:#ffd183}.store.bad{background:#4d1f29;color:#ff9aa6}
+.words{display:flex;flex-wrap:wrap;gap:8px}.word{font-family:ui-monospace,Consolas,monospace;font-size:18px;padding:7px 13px;border-radius:10px;background:#0d172b;border:1px solid #3a4b69;color:#dbe6fa}.word em{font-style:normal;color:#ffd183;font-weight:800}
+.prog{height:8px;border-radius:99px;background:#0d172b;overflow:hidden;margin-top:14px}.prog>div{height:100%;width:0;background:linear-gradient(90deg,#ff6d7c,#ffd183,#4cdbb1);transition:width .3s}
+</style></head><body><main><div class="row"><div><h1>⌨ Tap/Hold Lab</h1><p class="sub">Sinta o atraso de uma tecla de dupla função, teste limiares e veja os eventos em tempo real.</p></div><span class="pill">Simulador no navegador</span></div><nav class="tabs" role="tablist"><button class="tab active" data-tab="sim" role="tab" aria-selected="true">⌨ Simulador Tap/Hold</button><button class="tab" data-tab="combo" role="tab" aria-selected="false">🔎 Caçador de combos</button></nav><div class="tabpane" id="tab-sim"><div class="grid"><section class="panel"><h2>Configuração</h2><label for="target">Tecla de dupla função</label><select id="target"><option value="a">A</option><option value="t">T</option><option value="s">S</option><option value="d">D</option><option value="f">F</option><option value="j">J</option><option value="k">K</option><option value="l">L</option><option value="Space">Espaço</option></select><label for="hold">Ação ao segurar (HOLD)</label><select id="hold"><option value="Control">Ctrl</option><option value="Shift">Shift</option><option value="Alt">Alt</option><option value="Meta">Win / Meta</option><option value="Escape">Esc</option><option value="Backspace">Backspace</option><option value="Enter">Enter</option><option value="Layer">Camada de navegação (setas)</option></select><label for="threshold">Limiar de HOLD <strong id="thresholdValue" style="float:right;color:white">200 ms</strong></label><input id="threshold" type="range" min="30" max="600" step="5" value="200"><div class="row small muted"><span>30 ms</span><span>600 ms</span></div><label>Modo de decisão</label><div class="switches"><button class="active" data-mode="time">Por tempo</button><button data-mode="other">Outra tecla = HOLD</button><button data-mode="normal">Teclado normal</button></div><div class="note small" id="modeInfo">TAP: emite a letra quando você solta. HOLD: ativa após o limiar. Assim você percebe a diferença entre key down e key up.</div><div class="check"><input type="checkbox" id="beep"><label for="beep">Som ao reconhecer HOLD</label></div><div class="row"><button id="clear">Limpar teste</button><button id="reset" class="primary">Restaurar</button></div><p class="foot">Simulação local. O navegador não permite transformar Ctrl/Win em modificadores reais do sistema; os efeitos aparecem apenas na área de teste.</p></section><div class="stack"><section class="panel"><div class="row"><h2>Teste de digitação</h2><span class="pill" id="focusStatus">Clique na área abaixo</span></div><div id="test" class="test" tabindex="0" role="textbox" aria-label="Área para testar digitação" data-placeholder="Clique aqui e digite normalmente. Segure a tecla configurada e experimente combinações..."></div><div class="row" style="margin-top:12px"><span class="small muted">Tente digitar: <b>tata casa sala</b> e depois segurar a tecla escolhida.</span><button id="focus">Focar teste</button></div><div class="row" style="margin-top:16px"><span class="muted">Estado da tecla</span><strong id="state" class="status">Aguardando</strong></div><div class="row" style="margin-top:8px"><span class="muted">Tempo da pressão atual</span><strong id="liveTime">—</strong></div></section><section class="panel"><h2>Métricas desta sessão</h2><div class="stats"><div class="stat"><span>Toques normais (TAP)</span><strong id="tapCount">0</strong></div><div class="stat"><span>Seguradas (HOLD)</span><strong id="holdCount">0</strong></div><div class="stat"><span>Mediana dos TAPs</span><strong id="median">—</strong></div><div class="stat"><span>P95 dos TAPs</span><strong id="p95">—</strong></div></div><p class="small muted" id="suggestion">Digite naturalmente por um tempo para receber uma estimativa baseada nos TAPs observados.</p></section><section class="panel"><div class="row"><h2>Histórico de duração</h2><span class="small muted">Azul = TAP · Vermelho = HOLD · Verde = normal</span></div><div id="timeline" class="timeline"><span class="muted small">Os pressionamentos aparecerão aqui.</span></div></section><section class="panel"><div class="row"><h2>Eventos em tempo real</h2><button id="clearEvents">Limpar eventos</button></div><div class="log" id="events" aria-live="off"><div class="event"><span>—</span><span class="muted">Aguardando digitação</span><span></span></div></div></section></div></div></div>
+<div class="tabpane" id="tab-combo" hidden><div class="grid">
+<section class="panel"><h2>Configuração do caçador</h2><div id="cStore" class="store">Carregando…</div>
+<div class="note small"><b>Como usar:</b> digite à vontade na área ao lado (textos, e-mails, código — o que você realmente digita). O app mede o intervalo entre teclas e mostra quais pares <b>quase nunca</b> são apertados em sequência rápida. Esses pares são ótimos candidatos a combo (chord): ao apertá-los juntos viram Ctrl, Shift, F14…<br><br><b>Importante:</b> desative o Kanata enquanto coleta, para medir o teclado cru.</div>
+<label for="cWin">Janela de "rápido" <strong id="cWinV" style="float:right;color:white">50 ms</strong></label><input id="cWin" type="range" min="10" max="200" step="10" value="50"><div class="row small muted"><span>10 ms</span><span>200 ms</span></div>
+<label for="cMin">Mínimo de amostras para listar um par <strong id="cMinV" style="float:right;color:white">20</strong></label><input id="cMin" type="range" min="5" max="100" step="5" value="20"><div class="row small muted"><span>5</span><span>100</span></div>
+<label for="cGuide">Guia de palavras</label><select id="cGuide"><option value="pairs">Focar nos pares mais promissores</option><option value="cover">Cobrir todas as teclas</option></select>
+<label for="cGoal">Meta de cobertura por tecla (mapa e palavras) <strong id="cGoalV" style="float:right;color:white">100</strong></label><input id="cGoal" type="range" min="20" max="500" step="10" value="100"><div class="row small muted"><span>20</span><span>500</span></div>
+<label for="cFilter">Quais pares mostrar</label><select id="cFilter"><option value="near">Teclas vizinhas (fáceis de apertar juntas)</option><option value="hand">Mesma mão</option><option value="any">Qualquer par</option></select>
+<label for="cAction">Ação do combo (para o snippet Kanata)</label><select id="cAction"><option value="lctl">Ctrl</option><option value="lsft">Shift</option><option value="lalt">Alt</option><option value="lmet">Win / Meta</option><option value="esc">Esc</option><option value="bspc">Backspace</option><option value="ret">Enter</option><option value="f13">F13</option><option value="f14" selected>F14</option><option value="f15">F15</option><option value="f16">F16</option><option value="f17">F17</option><option value="f18">F18</option><option value="f19">F19</option><option value="f20">F20</option><option value="f21">F21</option><option value="f22">F22</option><option value="f23">F23</option><option value="f24">F24</option></select>
+<div class="row" style="margin-top:18px;flex-wrap:wrap;justify-content:flex-start"><button id="cExport" class="primary">Exportar backup</button><button id="cImport">Importar</button><button id="cReset">Zerar dados</button><input type="file" id="cFile" accept=".json,application/json" hidden></div>
+<p class="foot">Os dados acumulam e ficam salvos neste navegador, então você pode voltar outro dia e continuar. A coluna "Risco" é o limite superior (95%) da chance de o par disparar sem querer — quanto mais você digita, mais ele encolhe. O botão "Kanata" copia uma linha de <span class="kbd">defchordsv2</span>; confira a sintaxe na sua versão.</p></section>
+<div class="stack">
+<section class="panel"><div class="row"><h2>Digite estas palavras</h2><span class="small muted" id="cCover"></span></div><div id="cWords" class="words"></div><div class="prog"><div id="cProg"></div></div><p class="small muted" id="cNeed" style="margin:10px 0 18px;white-space:pre-line"></p>
+<div class="row"><h2 style="margin:0">Área de digitação</h2><span class="pill live" id="cLive">Aguardando…</span></div><textarea id="cText" class="typing" style="margin-top:12px" spellcheck="false" aria-label="Área de digitação livre" placeholder="Clique aqui e digite à vontade — quanto mais variado e mais volume, mais confiável o resultado. Só as teclas (letras, números, pontuação) são medidas; o texto em si é descartado."></textarea></section>
+<section class="panel"><h2>Métricas</h2><div class="stats"><div class="stat"><span>Teclas digitadas</span><strong id="cTotal">0</strong></div><div class="stat"><span>Cobertura das teclas (meta)</span><strong id="cKeysOk">0%</strong></div><div class="stat"><span>Pares rápidos observados</span><strong id="cPairsSeen">0</strong></div><div class="stat"><span>Pares seguros (filtro atual)</span><strong id="cSafe">0</strong></div></div><p class="small muted" id="cHint"></p></section>
+<section class="panel"><div class="row"><h2>Mapa do teclado</h2><span class="small muted" id="cKbHint"></span></div><div class="kbwrap"><div id="cKb" class="kb"></div></div><div class="legend" id="cLegendCov"><span><i style="background:rgba(120,140,170,.3)"></i>0%</span><span><i style="background:rgba(255,109,124,.6)"></i>&lt; 34%</span><span><i style="background:rgba(255,170,100,.6)"></i>&lt; 67%</span><span><i style="background:rgba(255,209,131,.6)"></i>&lt; 100%</span><span><i style="background:rgba(76,219,177,.7)"></i>100% (meta)</span></div><div class="legend" id="cLegend" hidden><span><i style="background:rgba(76,219,177,.6)"></i>quase nunca junto</span><span><i style="background:rgba(255,209,131,.55)"></i>raro</span><span><i style="background:rgba(255,109,124,.6)"></i>acontece</span><span><i style="background:rgba(120,140,170,.25)"></i>poucos dados</span></div></section>
+<section class="panel"><div class="row"><h2>Melhores candidatos a combo</h2><span class="small muted" id="cTblInfo"></span></div><div class="tblwrap"><table class="tbl"><thead><tr><th>#</th><th>Par</th><th>Ocorrências rápidas</th><th>Por ordem</th><th>Amostras</th><th>Risco (até)</th><th>Status</th><th></th></tr></thead><tbody id="cRows"></tbody></table></div></section>
+<section class="panel"><div class="row"><h2>Combos de 3 teclas</h2><span class="small muted" id="cTriInfo"></span></div><p class="small muted" style="margin:0 0 12px">Trios cujas três teclas são apertadas dentro da janela de "rápido" (em qualquer ordem). Esta contagem começou na versão que adicionou os trios, então só conta o que você digitar a partir daí.</p><div class="tblwrap"><table class="tbl"><thead><tr><th>#</th><th>Trio</th><th>Ocorrências rápidas</th><th>Amostras (tecla menos digitada)</th><th>Risco (até)</th><th>Status</th><th></th></tr></thead><tbody id="cTri"></tbody></table></div></section>
+</div></div></div></main><script>
+(()=>{'use strict';const $=id=>document.getElementById(id),target=$('target'),hold=$('hold'),threshold=$('threshold'),test=$('test'),events=$('events'),timeline=$('timeline');let mode='time',press=null,modifier=false,heldKeys=new Set(),samples=[],eventCount=0,buffer='',raf=0,audioCtx;const actionNames={Control:'Ctrl',Shift:'Shift',Alt:'Alt',Meta:'Win',Escape:'Esc',Backspace:'Backspace',Enter:'Enter',Layer:'Camada'};function log(message,duration=''){const now=new Date().toLocaleTimeString('pt-BR',{hour12:false});if(eventCount++===0)events.innerHTML='';const el=document.createElement('div');el.className='event';const a=document.createElement('span');a.textContent=now;const b=document.createElement('span');b.textContent=message;const c=document.createElement('span');c.className='duration';c.textContent=duration;el.append(a,b,c);events.prepend(el);while(events.children.length>100)events.lastChild.remove()}function setState(s,cls=''){const el=$('state');el.textContent=s;el.className='status '+cls}function draw(){test.textContent=buffer;test.scrollTop=test.scrollHeight}function append(s){buffer+=s;draw()}function backspace(){buffer=buffer.slice(0,-1);draw()}function play(){if(!$('beep').checked)return;try{audioCtx??=new(window.AudioContext||window.webkitAudioContext)();const o=audioCtx.createOscillator(),g=audioCtx.createGain();o.connect(g);g.connect(audioCtx.destination);o.frequency.value=640;g.gain.value=.04;o.start();o.stop(audioCtx.currentTime+.07)}catch{}}function beginHold(reason){if(!press||press.isHold)return;press.isHold=true;modifier=true;setState('HOLD → '+actionNames[hold.value],'hold');log('HOLD ativado ('+reason+'): '+actionNames[hold.value],Math.round(performance.now()-press.start)+' ms');play()}function percentile(arr,p){if(!arr.length)return null;const sorted=[...arr].sort((a,b)=>a-b),idx=(sorted.length-1)*p,lo=Math.floor(idx),hi=Math.ceil(idx);return Math.round(sorted[lo]+(sorted[hi]-sorted[lo])*(idx-lo))}function update(){const taps=samples.filter(s=>s.type==='tap').map(s=>s.ms);$('tapCount').textContent=taps.length;$('holdCount').textContent=samples.filter(s=>s.type==='hold').length;$('median').textContent=taps.length?percentile(taps,.5)+' ms':'—';$('p95').textContent=taps.length?percentile(taps,.95)+' ms':'—';$('suggestion').textContent=taps.length<20?'Registre pelo menos 20 TAPs para obter uma estimativa preliminar. ('+taps.length+'/20)':'P95 dos TAPs observados: '+percentile(taps,.95)+' ms. Como ponto de partida, teste '+Math.ceil((percentile(taps,.95)+30)/10)*10+' ms; isso não garante ausência de erros e depende do modo de decisão.';timeline.innerHTML='';for(const s of samples.slice(-25).reverse()){const line=document.createElement('div');line.className='barline';const label=document.createElement('span');label.textContent=s.ms+' ms';const area=document.createElement('div');const bar=document.createElement('div');bar.className='bar '+s.type;bar.style.width=Math.min(100,Math.max(1,s.ms/650*100))+'%';area.append(bar);line.append(label,area);timeline.append(line)}}function record(ms,type){samples.push({ms,type});if(samples.length>1000)samples.shift();update()}function targetKey(e){return target.value==='Space'?e.code==='Space':e.key.toLowerCase()===target.value}function ordinaryKey(e){if(e.key==='Backspace')backspace();else if(e.key==='Enter')append('\n');else if(e.key==='Tab')append('    ');else if(e.key.length===1)append(e.key)}function applyModifier(e){if(hold.value==='Layer'){const arrows={h:'←',j:'↓',k:'↑',l:'→'};append(arrows[e.key.toLowerCase()]||'');log('Camada: '+(arrows[e.key.toLowerCase()]||e.key));return}if(hold.value==='Control'||hold.value==='Meta'){const k=e.key.toLowerCase();if(k==='a'){log('Atalho simulado: '+actionNames[hold.value]+'+A (selecionar tudo)');return}if(k==='c'||k==='v'||k==='x'||k==='z'){log('Atalho simulado: '+actionNames[hold.value]+'+'+k.toUpperCase());return}}if(hold.value==='Shift'&&e.key.length===1){append(e.key.toUpperCase());return}if(hold.value==='Escape'){log('Esc ativo + '+e.key);return}if(hold.value==='Backspace'){backspace();return}if(hold.value==='Enter'){append('\n');return}log(actionNames[hold.value]+' + '+e.key+' (simulado)')}function finishPress(){if(!press)return;clearTimeout(press.timer);const ms=Math.round(performance.now()-press.start);if(!press.isHold){append(target.value==='Space'?' ':target.value);record(ms,mode==='normal'?'normal':'tap');setState('TAP → '+(target.value==='Space'?'Espaço':target.value.toUpperCase()),'tap');log('TAP enviado no KEY UP',ms+' ms')}else{record(ms,'hold');setState('HOLD encerrado','hold');log('HOLD liberado',ms+' ms')}press=null;modifier=false;$('liveTime').textContent='—'}function cancel(){if(press){clearTimeout(press.timer);press=null}modifier=false;heldKeys.clear();$('liveTime').textContent='—';setState('Aguardando')}function frame(){if(press)$('liveTime').textContent=Math.round(performance.now()-press.start)+' ms';raf=requestAnimationFrame(frame)}raf=requestAnimationFrame(frame);test.addEventListener('keydown',e=>{if(e.ctrlKey||e.metaKey||e.altKey){e.preventDefault();return}e.preventDefault();if(heldKeys.has(e.code))return;heldKeys.add(e.code);if(targetKey(e)){if(press)return;if(mode==='normal'){append(target.value==='Space'?' ':target.value);press={start:performance.now(),isHold:false,normal:true};setState('NORMAL → key down','tap');log('Tecla enviada imediatamente no KEY DOWN');return}press={start:performance.now(),isHold:false,timer:null};setState('Aguardando decisão…','pending');log('KEY DOWN: '+(target.value==='Space'?'Espaço':target.value.toUpperCase()));if(mode==='time')press.timer=setTimeout(()=>beginHold('limiar '+threshold.value+' ms'),Number(threshold.value));return}if(press&&!press.isHold&&mode==='other')beginHold('outra tecla pressionada');if(modifier){applyModifier(e);return}ordinaryKey(e)});test.addEventListener('keyup',e=>{heldKeys.delete(e.code);if(targetKey(e)){if(press?.normal){const ms=Math.round(performance.now()-press.start);record(ms,'normal');log('KEY UP (teclado normal)',ms+' ms');press=null;setState('NORMAL concluído','tap');return}finishPress()}});test.addEventListener('blur',()=>{cancel();$('focusStatus').textContent='Clique na área abaixo'});test.addEventListener('focus',()=>$('focusStatus').textContent='Capturando teclas');$('focus').onclick=()=>test.focus();$('clear').onclick=()=>{buffer='';samples=[];draw();update();cancel();test.focus()};$('clearEvents').onclick=()=>{events.innerHTML='';eventCount=0};$('reset').onclick=()=>{target.value='a';hold.value='Control';threshold.value=200;threshold.dispatchEvent(new Event('input'));document.querySelector('[data-mode="time"]').click();$('clear').click()};threshold.oninput=()=>{$('thresholdValue').textContent=threshold.value+' ms';log('Limiar ajustado para '+threshold.value+' ms')};document.querySelectorAll('[data-mode]').forEach(b=>b.onclick=()=>{cancel();mode=b.dataset.mode;document.querySelectorAll('[data-mode]').forEach(x=>x.classList.toggle('active',x===b));$('modeInfo').textContent=mode==='time'?'TAP: emite a letra ao soltar antes do limiar. HOLD: ativa quando o tempo se esgota.':mode==='other'?'TAP: emite ao soltar. Se outra tecla for pressionada enquanto a tecla-alvo estiver abaixada, ativa HOLD imediatamente. Atenção: pode confundir digitação sobreposta.':'Teclado normal: a letra aparece no KEY DOWN, sem esperar soltar. Use como referência de latência.';log('Modo alterado: '+b.textContent);test.focus()});window.addEventListener('blur',cancel);update();draw()})();
+</script>
+<script>
+/* ===== Caçador de combos: descobre pares de teclas que quase nunca são digitados em sequência rápida ===== */
+(()=>{'use strict';
+const $=id=>document.getElementById(id);
+const STORE='tapHoldLab.pairs.v1',MAXD=200,BUCKET=10,NB=MAXD/BUCKET,U=48;
+
+/* abas */
+document.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('[data-tab]').forEach(x=>{const on=x===b;x.classList.toggle('active',on);x.setAttribute('aria-selected',on)});
+  document.querySelectorAll('.tabpane').forEach(p=>p.hidden=p.id!=='tab-'+b.dataset.tab);
+  if(b.dataset.tab==='combo')render();
+});
+
+/* layout físico (por e.code, independe do layout do SO) */
+const L=s=>s.split('').map(c=>['Key'+c,c]);
+const ROWS=[
+  [0,[['Backquote','`'],...'1234567890'.split('').map(d=>['Digit'+d,d]),['Minus','-'],['Equal','=']]],
+  [.5,[...L('QWERTYUIOP'),['BracketLeft','['],['BracketRight',']'],['Backslash','\\']]],
+  [.75,[...L('ASDFGHJKL'),['Semicolon',';'],['Quote',"'"]]],
+  [.25,[['IntlBackslash','\\'],...L('ZXCVBNM'),['Comma',','],['Period','.'],['Slash','/'],['IntlRo','/']]]
+];
+const LEFT_N=[6,5,5,6],KEYS={};
+ROWS.forEach(([off,items],y)=>items.forEach(([code,label],i)=>{KEYS[code]={code,label,x:off+i,y,left:i<LEFT_N[y],opt:code.startsWith('Intl')}}));
+const CODES=Object.keys(KEYS);
+const KN={Backquote:'grv',Minus:'min',Equal:'eql',BracketLeft:'lbrc',BracketRight:'rbrc',Backslash:'bksl',Semicolon:'scln',Quote:'apos',Comma:'comm',Period:'dot',Slash:'slash',IntlBackslash:'nubs',IntlRo:'ro'};
+const kname=c=>KN[c]||(c.startsWith('Key')?c[3].toLowerCase():c.replace('Digit',''));
+
+/* dados: contagem por tecla + histograma (10 ms) de intervalos por par ordenado "a|b" */
+/* Armazenamento: com o servidor local (serve.py) os dados vão para data/combo-data.json (valem em qualquer navegador);
+   localStorage fica só como espelho/fallback. Nunca gravamos no disco antes de ler o que já existe lá. */
+const API='/api/data',HDR={'X-Requested-With':'tap-hold-lab'};
+const emptyData=()=>({keys:{},pairs:{},labels:{},settings:{},triples:{},tkeys:{}});
+const norm=d=>{if(!d||typeof d.keys!=='object'||typeof d.pairs!=='object')return emptyData();d.labels??={};d.settings??={};d.triples??={};d.tkeys??={};return d};
+const totalOf=d=>Object.values(d.keys).reduce((a,b)=>a+(+b||0),0);
+let lsOK=true;
+function loadLocal(){try{return norm(JSON.parse(localStorage.getItem(STORE)))}catch{lsOK=false;return emptyData()}}
+let data=emptyData(),recent=[],sel=null,rq=0,saveT=0,mode='local',dirty=false,conflict=false,lastSaved=null,storeState='local';
+function showStore(s){
+  storeState=s;
+  const hh=lastSaved?lastSaved.toLocaleTimeString('pt-BR',{hour12:false}):'';
+  const M={
+    disk:['ok','💾 Salvo em disco (data/combo-data.json)'+(hh?' · '+hh:'')+'. Vale em qualquer navegador.'],
+    saving:['ok','💾 Salvando…'],
+    local:lsOK?['warn','⚠ Sem servidor: os dados ficam só neste navegador. Para gravar em disco, abra o site pelo iniciar-cacador.cmd (http://localhost:8765).']:['bad','⛔ NADA está sendo salvo aqui (armazenamento bloqueado). Abra o site pelo iniciar-cacador.cmd (http://localhost:8765).'],
+    conflict:['bad','⛔ O disco tem mais dados que esta página (outra aba aberta?). Nada foi sobrescrito — recarregue (F5).'],
+    error:['warn','⚠ Falha ao gravar no disco — vou tentar de novo. Seus dados seguem no navegador.']
+  }[s];
+  const el=$('cStore');el.className='store '+M[0];el.textContent=M[1];
+}
+async function push(force){
+  try{localStorage.setItem(STORE,JSON.stringify(data))}catch{}
+  if(mode!=='disk'||conflict)return;
+  showStore('saving');
+  const body=JSON.stringify(data);
+  try{
+    const r=await fetch(API,{method:'PUT',headers:{...HDR,'Content-Type':'application/json',...(force?{'X-Force':'1'}:{})},body,keepalive:body.length<60000});
+    if(r.status===409){conflict=true;showStore('conflict');return}
+    if(!r.ok)throw 0;
+    lastSaved=new Date();dirty=false;showStore('disk');
+  }catch{showStore('error')}
+}
+function save(now,force){dirty=true;clearTimeout(saveT);if(now)push(force);else saveT=setTimeout(()=>push(false),1500)}
+const SET_IDS={win:'cWin',min:'cMin',goal:'cGoal',guide:'cGuide',filter:'cFilter',action:'cAction'};
+function applySettings(){for(const[k,id]of Object.entries(SET_IDS)){const v=data.settings[k];if(v!==undefined)$(id).value=v}}
+function collectSettings(){for(const[k,id]of Object.entries(SET_IDS))data.settings[k]=$(id).value}
+async function init(){
+  area.disabled=true;
+  try{
+    const local=loadLocal();data=local;
+    try{
+      const r=await fetch(API,{headers:HDR,cache:'no-store'});
+      if(!r.ok)throw 0;
+      const s=norm(await r.json());
+      mode='disk';
+      if(totalOf(local)>totalOf(s)){data=local;await push(false)}else data=s;
+    }catch{if(mode!=='disk')mode='local'}
+    applySettings();
+    if(mode==='local')showStore('local');else if(storeState!=='conflict'&&storeState!=='error')showStore('disk');
+  }finally{area.disabled=false}
+  refreshWords();render();
+}
+const label=c=>{const l=data.labels[c];return l&&(!c.startsWith('Key')||/^[A-Z]$/.test(l))?l:KEYS[c].label};
+
+const area=$('cText');
+area.addEventListener('keydown',e=>{
+  if(e.repeat||e.ctrlKey||e.altKey||e.metaKey)return;
+  const k=KEYS[e.code];if(!k)return;
+  if(e.key.length===1&&e.key!==' '&&!e.shiftKey&&!e.getModifierState('AltGraph')&&(!e.code.startsWith('Key')||/^[a-z]$/i.test(e.key)))data.labels[e.code]=e.key.toUpperCase();
+  const t=e.timeStamp,win=+$('cWin').value;
+  while(recent.length&&t-recent[0].t>=MAXD)recent.shift();
+  let near=null;
+  for(const r of recent){
+    if(r.code===e.code)continue;
+    const d=t-r.t,b=Math.min(NB-1,Math.floor(d/BUCKET)),key=r.code+'|'+e.code;
+    (data.pairs[key]??=new Array(NB).fill(0))[b]++;
+    if(!near||d<near.d)near={code:r.code,d};
+  }
+  /* trios: duas teclas anteriores (distintas) + esta, todas dentro da janela; contado sem ordem, pelo intervalo total */
+  for(let i=0;i<recent.length;i++)for(let j=i+1;j<recent.length;j++){
+    const a=recent[i],b=recent[j];if(a.code===e.code||b.code===e.code||a.code===b.code)continue;
+    const bk=Math.min(NB-1,Math.floor((t-Math.min(a.t,b.t))/BUCKET)),key=[a.code,b.code,e.code].sort().join('|');
+    (data.triples[key]??=new Array(NB).fill(0))[bk]++;
+  }
+  data.tkeys[e.code]=(data.tkeys[e.code]||0)+1;
+  recent.push({code:e.code,t});
+  data.keys[e.code]=(data.keys[e.code]||0)+1;
+  const live=$('cLive');
+  if(near&&near.d<win){live.textContent='Par rápido: '+label(near.code)+' + '+label(e.code)+' · '+Math.round(near.d)+' ms';live.style.background='#4d1f29';live.style.color='#ff9aa6'}
+  else{live.textContent='Última: '+label(e.code);live.style.background='';live.style.color=''}
+  save();scheduleRender();
+});
+area.addEventListener('input',()=>{
+  if(area.value.length>1500)area.value=area.value.slice(-800);
+  const v=area.value;
+  if(/\s$/.test(v)){ /* palavra concluída (espaço/enter): sai da lista e as próximas são recalculadas */
+    const toks=v.toLowerCase().trim().split(/\s+/),t=toks[toks.length-1];
+    if(t){used.add(t);used.add(t.replace(/^[^a-z0-9]+|[^a-z0-9]+$/g,''))}
+    refreshWords();
+  }
+});
+area.addEventListener('blur',()=>{recent.length=0;if(dirty)save(true)});
+window.addEventListener('pagehide',()=>{if(dirty)save(true)});
+
+/* guia de palavras (inglês): sugere as 10 palavras que mais ajudam as teclas ainda abaixo da meta */
+const WORDS=`quick quiet queen question quality quarter quote quit quite equal square request require acquire quantity quest quiz squeeze liquid unique technique frequent sequence consequence quarrel quartz query quilt quota squad squash squirrel antique bouquet critique equip equation earthquake quickly quietly questions qualify quarterback quench
+zero zone zoo zebra zip zeal zigzag size prize freeze breeze frozen gaze graze lazy crazy dozen amaze magazine realize organize analyze fuzzy jazz buzz fizz puzzle zinc zombie zest zoom horizon citizen apologize memorize recognize summarize utilize authorize capitalize colonize
+box fox six mix fix next text exam example expect explain express extra exit exact exist expert expand excite excuse exercise extend extreme index complex axis tax relax taxi toxic oxygen maximum approximate texture lexicon expensive explore explode export expose external exchange excellent except excess experience experiment expression extension
+just job join joy judge jump jar jet jacket jungle juice jelly journey journal january july june enjoy object project subject reject adjust major jewel jaw jam jelly jigsaw jogging joke jolly judgment junior justice juggle jazz jealous jeans jersey jumbo junk
+key kick kid king kitchen knee knife knock know knowledge kind keep kettle kernel kayak make take look book work walk talk think drink black back track keyboard kidney kingdom kitten knight knit knob knot known kilometer kiss kit kite hockey monkey turkey whiskey market basket pocket packet bucket ticket rocket
+very value view voice visit village violet vivid vote virtual victory vacation vegetable vehicle velvet vendor venture verb verse version vertical vessel veteran vibrate video violin virus vision vital vocal volume voyage have give live move love drive river over never even every above active alive available average avoid advice advance adventure
+water window winter wonder wonderful wrong write wrist wolf wheel weave wizard wallet warm wash waste watch wave wealth weather weekend weight welcome western whale wheat whether whisper whistle width wild willow wisdom witch within without woman wood word world worry wrap wreck away always answer between swim swing sweet switch sword twelve twenty twice twin twist tweet
+green gold grow great guitar garden gather giant ginger giggle gigantic gadget gallery garage garlic gauge general genius gentle genuine geography gesture ghost gift glad glass glide global glory glove glue goal goat goggles golf good goose gorilla gossip govern grab grace grade grain grand grape graph grasp grass gravity gravel gray grill grin grind grip groan ground group guard guess guest guide guilt gum gym bag big dog egg flag frog hug leg log pig rug sing song long strong bring thing going being doing ring wing change bridge engine energy agree angle angry begin eager eagle edge gang gang gaze gear gene gold gong gown grudge gruff gunge language message manage image village garbage luggage average
+bubble baby back bad badge bake balance ball banana band bank bar barn base basic basket bath battle beach bean bear beard beat beautiful because bed bee beef beer before begin behind believe bell belong below belt bench bend benefit best better beyond bicycle bike bill bird birth bit bite bitter blame blank blanket blast blend bless blind block blood blow blue board boat body boil bold bone bonus boot border born borrow boss both bother bottle bottom bounce bowl boy brain brake branch brave bread break breath brick brief bright brilliant broad broken brother brown brush bubble budget build bulb bunch burn burst bus business busy butter button buy
+pack package page pain paint pair palace pale pan panel paper parade parent park parrot part party pass past pasta pastry patch path patient pattern pause pay peace peach peak pear pen pencil penny people pepper perfect perhaps period permit person pet phone photo phrase piano pick picnic picture pie piece pig pile pilot pin pink pipe pitch pizza place plain plan plane planet plant plastic plate play please pleasant plenty plug plum plus pocket poem poet point poison polar pole police polite pond pool poor popular port pose positive possible post pot potato pound pour powder power practice praise pray prefer prepare present president press pretty prevent price pride prince print prison private prize probably problem process produce product profit program promise proof proper protect proud prove public pull pump punch pupil puppy purple purpose push put puzzle
+fabric face fact factory fail fair fairy faith fall false fame family famous fan fancy far farm fashion fast fat father fault favor fear feast feather fee feed feel fellow fence festival fever few fiction field fierce fight figure file fill film final find fine finger finish fire firm first fish fit five flag flame flash flat flavor flesh flight float flock flood floor flour flow flower fluid fly foam focus fog fold folk follow food fool foot force forest forget fork form formal fortune forward found fountain four frame free fresh friend fright from front fruit fry fuel full fun funny fur future
+yard year yellow yes yesterday yet yield young youth yoga yogurt yawn yacht yearn yell yolk yummy eye party story study body city copy carry empty enemy energy every family happy history industry journey library memory money mystery pretty reply simply sunny supply system theory today type typical syntax symbol python rhythm gym myth style cycle hybrid
+hand handle hang happen hard harm harvest hat hate hawk head health hear heart heat heavy heel height hello help hen herb here hero hide high hill hint hip hire history hit hobby hold hole holiday holy home honest honey hood hook hope horn horse hospital host hot hotel hour house however huge human humble humor hundred hungry hunt hurry hurt husband hut
+cabin cable cage cake calculate calendar call calm camel camera camp can canal candle candy cap capital captain car card care career careful cargo carpet cart case cash castle cat catch category cause cave ceiling celebrate cell center central century ceremony certain chain chair chalk challenge chamber champion chance change channel chapter character charge charity chart chase cheap check cheek cheese chef cherry chest chicken chief child chimney chin choice choose chorus church circle circus city civil claim class clay clean clear clerk clever click client cliff climb clinic clip clock close cloth cloud club clue coach coal coast coat code coffee coin cold collar collect college color column combine comfort comic command comment common compare complete concert condition confirm connect consider contact content contest control cook cool copper copy coral core corn corner correct cost cotton couch cough count country couple courage course court cousin cover cow crack craft crash crazy cream create credit crew crime crisp critic crop cross crowd crown cruel crush cry crystal cube cucumber culture cup cure curious current curtain curve cushion custom cute cycle
+dad daily dairy damage damp dance danger dare dark data date daughter dawn day dead deal dear death debate decade decide deck declare decorate deep deer defend define degree delay delicate deliver demand dentist deny depart depend depth describe desert design desk detail detect develop device diamond diary dictionary diet differ difficult dig dinner dinosaur direct dirt disaster discover dish distance district dive divide doctor document dollar dolphin domain donkey door double doubt down dragon drama draw dream dress drift drill drink drive drop drum dry duck due dull during dust duty dwarf
+lab label labor lace lack ladder lady lake lamp land lane language large laser last late laugh launch laundry law lawn layer lead leaf learn least leather leave lecture left lemon lend length lens less lesson letter level liberty license lid life lift light like limit line link lion lip list listen little load loan local lock lonely loop loose lord lose loss lot loud lounge love low luck lunch lung luxury
+mad magic magnet maid mail main major make male mall man manager many map marble march margin mark marry mask mass master match material math matter mayor meal mean measure meat medal media medicine meet melon member memory mental menu mercy merge merit mess metal method middle might mild mile milk mill mind mine mineral minor minute mirror miss mist mistake mix mobile model modern modest moment money monitor month mood moon moral more morning mother motion motor mountain mouse mouth movie much mud muscle museum music must mutual
+nail name narrow nation native nature navy near neat neck need needle neighbor nerve nest net network never news nice night noble nod noise none noodle noon normal north nose note nothing notice novel nowhere number nurse nut
+oak oar obey object ocean offer office often oil old olive once onion only open opera opinion option orange orbit order ordinary organ origin other otter ought outdoor outer outfit outside oval oven owl own owner
+race radar radio rail rain raise ranch range rapid rare rate rather raw reach read ready real reason receive recent recipe record recycle red reduce reflect reform refuse region regret regular relax release relief rely remain remember remind remove rent repair repeat reply report rescue resist respect rest result return reveal review reward rhyme rib rice rich ride ridge right ring rise risk rival road roar roast robot rock role roll roof room root rope rose rough round route royal rub rubber rude rule run rural rush
+sad safe sail salad salary sale salt same sample sand satisfy sauce save say scale scare scene school science scissors score screen screw script sea search season seat second secret section see seed seek seem select sell send senior sense sentence serious serve set settle seven shade shadow shake shall shame shape share shark sharp shed sheep sheet shelf shell shelter shift shine ship shirt shock shoe shoot shop shore short should shoulder shout show shower shrimp shut shy sick side sight sign signal silent silk silly silver similar simple since sister sit site skill skin skirt sky slave sleep slice slide slight slip slow small smart smell smile smoke smooth snack snake snow soap soccer social sock soft soil solar soldier solid solve some son soon sorry sort soul sound soup source south space spare speak special speed spell spend spice spider spin spirit split spoon sport spot spread spring stable staff stage stair stamp stand star start state station stay steady steak steal steam steel steep stem step stick still stock stomach stone stop store storm straight strange stream street stress stretch strike string strip stroke structure student stuff stupid subway success such sudden sugar suggest suit summer sun super supper support sure surface surprise swallow swear sweat sweep swim symbol
+table tail tale talent talk tall tank tape target task taste taxi tea teach team tear tell ten tend tent term test than thank that theater theme there thick thief thin thing think third thirsty thorough thought thousand thread three throat through throw thumb thunder ticket tide tidy tie tiger tight till time tiny tip tire title toast today toe together toilet tomato tone tongue tonight tool tooth top topic total touch tough tour toward towel tower town toy trace track trade traffic train transfer trap travel tray treasure treat tree trend trial triangle trick trip trouble truck true trust truth try tube tune tunnel turn twice type
+ugly umbrella uncle under understand union unit universe unless until upon upper upset urban urge use useful usual
+vague valley van vast vault vote
+dash dish fish flash fresh push shush wish splash crash trash cash rush brush blush
+the of and to in is you that it he was for on are as with his they at be this from have or by one had not but what all were when we there can an your which their said if do will each about how up out them then she many some so these would other into has more her two like him see time could no make than first been its who now people my made over did down only way find use may water long little very after words called just where most know
+0123456789 9876543210 1234567890 1024 2048 4096 8080 2024 2025 1999 3.14 10,000 it's don't can't won't we'll e.g. i.e. a-b well-known a/b x=1; [ok] key=value;`.split(/\s+/).filter(Boolean);
+const used=new Set();
+const NONOPT=CODES.filter(c=>!KEYS[c].opt);
+function symMap(){const m={};for(const c of CODES)if(!/^(Key|Digit)/.test(c)&&!KEYS[c].opt&&data.labels[c])m[data.labels[c].toLowerCase()]=c;return m}
+const codeOf=(ch,sm)=>{const l=ch.toLowerCase();return/[a-z]/.test(l)?'Key'+l.toUpperCase():/[0-9]/.test(l)?'Digit'+l:sm[l]};
+function needMap(goal){const n={};for(const c of NONOPT)n[c]=Math.max(0,goal-(data.keys[c]||0));return n}
+/* Estado do guia. Modo "pairs": pega os pares ainda não decididos (n < meta) com poucas colisões e dá peso à tecla
+   "gargalo" de cada um (a menos digitada, que limita a amostra do par). Modo "cover" (ou sem pares): cobre as teclas abaixo da meta. */
+const LET=CODES.filter(c=>c.startsWith('Key'));
+const ENG={e:12.7,t:9.1,a:8.2,o:7.5,i:7,n:6.7,s:6.3,h:6.1,r:6,d:4.3,l:4,c:2.8,u:2.8,m:2.4,w:2.4,f:2.2,g:2,y:2,p:1.9,b:1.5,v:1,k:.8,j:.15,x:.15,q:.1,z:.07};
+function guideState(goal){
+  const W={};
+  if($('cGuide').value==='pairs'){
+    const lim=(+$('cWin').value)/BUCKET,cand=[];
+    for(let i=0;i<LET.length;i++)for(let j=i+1;j<LET.length;j++){
+      const A=KEYS[LET[i]],B=KEYS[LET[j]];if(!allowed(A,B,'near'))continue; /* só teclas vizinhas: fáceis de apertar juntas */
+      const r=info(A,B,lim);
+      if(r.n>=goal)continue;                                   /* amostra completa: nada a fazer */
+      if(r.hits>=2&&r.hits/Math.max(r.n,1)>.1)continue;        /* já se mostrou ruim */
+      r.pri=(1/(1+r.hits))*(.4+.6*Math.min(1,r.n/goal));
+      r.prior=ENG[A.label.toLowerCase()]*ENG[B.label.toLowerCase()]; /* desempate: letras raras primeiro */
+      cand.push(r);
+    }
+    cand.sort((a,b)=>b.pri-a.pri||a.prior-b.prior);
+    const focus=cand.slice(0,10);
+    for(const r of focus){if(r.na<=r.nb)W[r.A.code]=(W[r.A.code]||0)+r.pri;if(r.nb<=r.na)W[r.B.code]=(W[r.B.code]||0)+r.pri}
+    if(focus.length)return{W,focus};
+  }
+  const need=needMap(goal);
+  for(const c of NONOPT)if(need[c])W[c]=(need[c]/goal)*(c.startsWith('Key')?1:.6);
+  return{W,focus:[]};
+}
+function refreshWords(){
+  const goal=+$('cGoal').value,sm=symMap(),need=needMap(goal),W=guideState(goal).W,scored=[],seen=new Set();
+  for(const w of WORDS){
+    if(used.has(w)||seen.has(w))continue;seen.add(w);
+    const cc={};let bad=false;
+    for(const ch of w){const c=codeOf(ch,sm);if(!c||!KEYS[c]){bad=true;break}cc[c]=(cc[c]||0)+1}
+    if(bad)continue;
+    let s=0;for(const[c,n]of Object.entries(cc)){const nd=need[c]||0,wt=W[c]||0;if(nd&&wt)s+=Math.min(n,nd)*wt}
+    if(s>0)scored.push({w,s:s/Math.pow(w.length,.85)});
+  }
+  scored.sort((a,b)=>b.s-a.s);
+  const box=$('cWords');box.innerHTML='';
+  scored.slice(0,10).forEach(({w})=>{
+    const el=document.createElement('span');el.className='word';
+    for(const ch of w){const c=codeOf(ch,sm);if(c&&W[c]>0){const em=document.createElement('em');em.textContent=ch;el.append(em)}else el.append(ch)}
+    box.append(el);
+  });
+  if(!scored.length){const done=NONOPT.every(c=>need[c]===0);box.textContent=done?'🎉 Todas as teclas atingiram a meta! Veja o ranking de combos abaixo.':'As teclas que faltam são símbolos/números: aperte-as na área de digitação (aparecem no mapa abaixo).'}
+}
+function updateNeed(goal){
+  const G=guideState(goal);
+  if(!G.focus.length)return updateNeedCover(goal);
+  $('cNeed').textContent='Foco agora — pares promissores a confirmar: '+G.focus.slice(0,6).map(r=>label(r.A.code)+'+'+label(r.B.code)+' ('+r.n+'/'+goal+' amostras, '+r.hits+' colisões)').join(' · ')+'\nAs letras em amarelo nas palavras são as que mais ajudam a fechar esses pares.';
+}
+function updateNeedCover(goal){
+  const need=needMap(goal),lets=NONOPT.filter(c=>c.startsWith('Key')&&need[c]>0).sort((a,b)=>need[b]-need[a]);
+  const oth=NONOPT.filter(c=>!c.startsWith('Key')&&need[c]>0),zero=oth.filter(c=>!(data.keys[c]||0));
+  let t='';
+  if(lets.length)t+='Letras que mais faltam: '+lets.slice(0,8).map(c=>label(c)+' '+(data.keys[c]||0)+'/'+goal).join(' · ')+(lets.length>8?' …':'');
+  else t+='Todas as letras já atingiram a meta.';
+  if(oth.length)t+='\nNúmeros e símbolos abaixo da meta: '+oth.length+(zero.length?' · ainda não tocadas: '+zero.slice(0,14).map(label).join(' '):'');
+  $('cNeed').textContent=t;
+}
+
+/* estatística */
+const cnt=(a,b,lim)=>{const h=data.pairs[a+'|'+b];let c=0;if(h)for(let i=0;i<lim;i++)c+=h[i];return c};
+function wilson(h,n){const z=1.96,p=Math.min(1,h/n);return(p+z*z/(2*n)+z*Math.sqrt(p*(1-p)/n+z*z/(4*n*n)))/(1+z*z/n)}
+function info(A,B,lim){
+  const ab=cnt(A.code,B.code,lim),ba=cnt(B.code,A.code,lim),na=data.keys[A.code]||0,nb=data.keys[B.code]||0,n=Math.min(na,nb),hits=ab+ba;
+  return{A,B,ab,ba,na,nb,n,hits,u:n?wilson(hits,n):1};
+}
+function status(r,minS){
+  if(r.n<minS)return['na','Poucos dados'];
+  if(r.u<=.03)return['ok','Seguro'];
+  if(r.u<=.10)return['mid','Promissor'];
+  return r.hits?['bad','Colide']:['na','Incerto'];
+}
+function allowed(A,B,f){
+  if(f==='any')return true;
+  if(f==='hand')return A.left===B.left;
+  return Math.hypot(A.x-B.x,A.y-B.y)<=1.5;
+}
+const pct=u=>(u*100).toFixed(u<.1?1:0)+'%';
+
+/* teclado */
+const kb=$('cKb'),kbEl={};
+kb.style.width=(13.5*U)+'px';kb.style.height=(3*U+44)+'px';
+CODES.forEach(code=>{
+  const k=KEYS[code],el=document.createElement('button');
+  el.type='button';el.className='k';el.style.left=k.x*U+'px';el.style.top=k.y*U+'px';
+  el.innerHTML='<b></b><small></small>';
+  el.onclick=()=>{sel=sel===code?null:code;render()};
+  kb.append(el);kbEl[code]=el;
+});
+const COV=['rgba(120,140,170,.14)','rgba(255,109,124,.5)','rgba(255,170,100,.5)','rgba(255,209,131,.5)','rgba(76,219,177,.6)'];
+const COLORS={ok:'rgba(76,219,177,.5)',mid:'rgba(255,209,131,.45)',bad:'rgba(255,109,124,.55)',na:'rgba(120,140,170,.14)'};
+
+/* copiar */
+function copy(text,btn){
+  const done=()=>{const o=btn.textContent;btn.textContent='✓ Copiado';setTimeout(()=>btn.textContent=o,1200)};
+  const fallback=()=>{const t=document.createElement('textarea');t.value=text;document.body.append(t);t.select();try{document.execCommand('copy');done()}catch{}t.remove()};
+  try{navigator.clipboard.writeText(text).then(done,fallback)}catch{fallback()}
+}
+
+/* trios candidatos: neighbor = todas as teclas a no máx. ~3 teclas de distância entre si */
+const trioCache={};
+function getTrios(f){
+  return trioCache[f]??=(()=>{
+    const ks=CODES.filter(c=>!KEYS[c].opt).map(c=>KEYS[c]),out=[];
+    const ok=(A,B)=>f==='any'||(f==='hand'?A.left===B.left:Math.hypot(A.x-B.x,A.y-B.y)<=2.3);
+    for(let i=0;i<ks.length;i++)for(let j=i+1;j<ks.length;j++){if(!ok(ks[i],ks[j]))continue;
+      for(let k=j+1;k<ks.length;k++)if(ok(ks[i],ks[k])&&ok(ks[j],ks[k]))out.push([ks[i],ks[j],ks[k]])}
+    return out;
+  })();
+}
+function scheduleRender(){if(rq)return;rq=setTimeout(()=>{rq=0;render()},120)}
+function td(text,cls){const c=document.createElement('td');c.textContent=text;if(cls)c.className=cls;return c}
+function kbdPair(A,B){const s=document.createElement('span');for(const[i,K]of[A,B].entries()){if(i)s.append(' + ');const k=document.createElement('span');k.className='kbd';k.textContent=label(K.code);s.append(k)}return s}
+
+function render(){
+  if($('tab-combo').hidden)return;
+  const win=+$('cWin').value,lim=win/BUCKET,minS=+$('cMin').value,filt=$('cFilter').value,act=$('cAction').value;
+  $('cWinV').textContent=win+' ms';$('cMinV').textContent=minS;
+
+  const all=[];
+  for(let i=0;i<CODES.length;i++)for(let j=i+1;j<CODES.length;j++)all.push(info(KEYS[CODES[i]],KEYS[CODES[j]],lim));
+  const cand=all.filter(r=>allowed(r.A,r.B,filt)&&r.n>=minS).sort((a,b)=>a.u-b.u||b.n-a.n||a.hits-b.hits);
+  const hiddenN=all.filter(r=>allowed(r.A,r.B,filt)&&r.n<minS&&(data.keys[r.A.code]||data.keys[r.B.code])).length;
+  const safe=cand.filter(r=>status(r,minS)[0]==='ok').length;
+
+  /* métricas */
+  const total=Object.values(data.keys).reduce((a,b)=>a+b,0);
+  $('cTotal').textContent=total;
+  const goal=+$('cGoal').value;$('cGoalV').textContent=goal;
+  const cov=NONOPT.reduce((s,c)=>s+Math.min(1,(data.keys[c]||0)/goal),0)/NONOPT.length,covP=Math.round(cov*100)+'%';
+  $('cKeysOk').textContent=covP;$('cCover').textContent='Cobertura: '+covP;$('cProg').style.width=covP;
+  updateNeed(goal);
+  $('cPairsSeen').textContent=all.filter(r=>r.hits>0).length;
+  $('cSafe').textContent=safe;
+  $('cHint').textContent=total===0?'Comece a digitar as palavras sugeridas na área acima.':'Um par só entra no ranking quando as duas teclas têm pelo menos '+minS+' digitações. Meta de cobertura: '+goal+' por tecla.';
+
+  /* tabela */
+  const tb=$('cRows');tb.innerHTML='';
+  cand.slice(0,40).forEach((r,i)=>{
+    const tr=document.createElement('tr'),[cls,txt]=status(r,minS);
+    const pair=document.createElement('td');pair.append(kbdPair(r.A,r.B));
+    const badge=document.createElement('span');badge.className='badge b-'+cls;badge.textContent=txt;
+    const st=document.createElement('td');st.append(badge);
+    const bt=document.createElement('td'),btn=document.createElement('button');btn.textContent='Kanata';btn.title='Copiar linha defchordsv2';
+    btn.onclick=()=>copy('('+kname(r.A.code)+' '+kname(r.B.code)+') '+act+' '+win+' all-released ()',btn);bt.append(btn);
+    tr.append(td(i+1,'num'),pair,td(r.hits,'num'),td(label(r.A.code)+'→'+label(r.B.code)+' '+r.ab+' · '+label(r.B.code)+'→'+label(r.A.code)+' '+r.ba,'num'),td(r.na+' / '+r.nb,'num'),td(pct(r.u),'num'),st,bt);
+    tb.append(tr);
+  });
+  if(!cand.length){const tr=document.createElement('tr'),c=td('Nenhum par atingiu a amostra mínima ainda — digite mais na área acima (ou reduza a amostra mínima).');c.colSpan=8;c.style.whiteSpace='normal';tr.append(c);tb.append(tr)}
+  $('cTblInfo').textContent=cand.length?'Top '+Math.min(40,cand.length)+' de '+cand.length+(hiddenN?' · '+hiddenN+' pares ocultos por pouca amostra':''):'';
+
+  /* trios */
+  const tri=[];
+  for(const K of getTrios(filt)){
+    const n=Math.min(...K.map(k=>data.tkeys[k.code]||0));if(n<minS)continue;
+    const h=data.triples[K.map(k=>k.code).sort().join('|')];let hits=0;if(h)for(let i=0;i<lim;i++)hits+=h[i];
+    tri.push({K,n,hits,u:wilson(hits,n)});
+  }
+  tri.sort((a,b)=>a.u-b.u||b.n-a.n);
+  const tt=$('cTri');tt.innerHTML='';
+  tri.slice(0,30).forEach((r,i)=>{
+    const tr=document.createElement('tr'),[cls,txt]=status(r,minS);
+    const tk=document.createElement('td');r.K.forEach((k,x)=>{if(x)tk.append(' + ');const s=document.createElement('span');s.className='kbd';s.textContent=label(k.code);tk.append(s)});
+    const badge=document.createElement('span');badge.className='badge b-'+cls;badge.textContent=txt;
+    const st=document.createElement('td');st.append(badge);
+    const bt=document.createElement('td'),btn=document.createElement('button');btn.textContent='Kanata';btn.title='Copiar linha defchordsv2';
+    btn.onclick=()=>copy('('+r.K.map(k=>kname(k.code)).join(' ')+') '+act+' '+win+' all-released ()',btn);bt.append(btn);
+    tr.append(td(i+1,'num'),tk,td(r.hits,'num'),td(r.n,'num'),td(pct(r.u),'num'),st,bt);tt.append(tr);
+  });
+  if(!tri.length){const tr=document.createElement('tr'),c=td('Ainda sem trios com amostra suficiente. Os trios só contam a partir desta versão: continue digitando (mínimo '+minS+' por tecla).');c.colSpan=7;c.style.whiteSpace='normal';tr.append(c);tt.append(tr)}
+  $('cTriInfo').textContent=tri.length?'Top '+Math.min(30,tri.length)+' de '+tri.length:'';
+
+  /* teclado */
+  $('cLegend').hidden=!sel;$('cLegendCov').hidden=!!sel;
+  const selN=sel?(data.keys[sel]||0):0;
+  $('cKbHint').textContent=sel?(selN<minS?label(sel)+' foi digitada só '+selN+'× (mínimo '+minS+' para listar pares): digite mais com ela ou reduza o mínimo. Clique de novo para voltar.':'Cores = quão raro é digitar '+label(sel)+' junto com cada tecla. Clique de novo para voltar à cobertura.'):'Cobertura de cada tecla (meta: '+goal+' digitações). Clique numa tecla para ver com quais outras ela quase nunca aparece em sequência rápida.';
+  CODES.forEach(code=>{
+    const el=kbEl[code],c=data.keys[code]||0,k=KEYS[code];
+    el.hidden=k.opt&&!c;
+    el.classList.toggle('sel',code===sel);
+    el.querySelector('b').textContent=label(code);
+    const sm=el.querySelector('small');
+    if(!sel){
+      const p=Math.min(1,c/goal);
+      el.style.background=!c?COV[0]:p<.34?COV[1]:p<.67?COV[2]:p<1?COV[3]:COV[4];
+      sm.textContent=p>=1?'✓':Math.round(p*100)+'%';el.title=label(code)+': '+c+' de '+goal+' ('+Math.round(p*100)+'%)';
+    }else if(code===sel){
+      el.style.background='rgba(93,146,255,.85)';sm.textContent='●';el.title='Selecionada';
+    }else{
+      const r=info(KEYS[sel],k,lim),[cls]=status(r,minS);
+      el.style.background=COLORS[cls];sm.textContent=r.n>=minS?r.hits:'—';
+      el.title=label(sel)+' + '+label(code)+': '+r.hits+' ocorrências rápidas ('+r.n+' amostras'+(r.n?', risco até '+pct(r.u):'')+')';
+    }
+  });
+}
+
+['cWin','cMin','cGoal','cGuide','cFilter','cAction'].forEach(id=>$(id).addEventListener('input',()=>{collectSettings();save();if(id!=='cAction')refreshWords();render()}));
+$('cExport').onclick=()=>{
+  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(data)],{type:'application/json'}));
+  a.download='tap-hold-lab-dados.json';document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+};
+$('cImport').onclick=()=>$('cFile').click();
+$('cFile').onchange=async e=>{
+  const f=e.target.files[0];e.target.value='';if(!f)return;
+  try{
+    const d=JSON.parse(await f.text());if(!d||typeof d.keys!=='object'||typeof d.pairs!=='object')throw 0;
+    for(const[k,v]of Object.entries(d.keys))data.keys[k]=(data.keys[k]||0)+(+v||0);
+    for(const[k,h]of Object.entries(d.pairs)){const t=data.pairs[k]??=new Array(NB).fill(0);for(let i=0;i<NB;i++)t[i]+=+h[i]||0}
+    for(const[k,v]of Object.entries(d.tkeys||{}))data.tkeys[k]=(data.tkeys[k]||0)+(+v||0);
+    for(const[k,h]of Object.entries(d.triples||{})){const t=data.triples[k]??=new Array(NB).fill(0);for(let i=0;i<NB;i++)t[i]+=+h[i]||0}
+    Object.assign(data.labels,d.labels||{});
+    save(true);refreshWords();render();alert('Backup somado aos dados atuais.');
+  }catch{alert('Arquivo inválido.')}
+};
+$('cReset').onclick=()=>{
+  if(!confirm('Apagar TODOS os dados coletados'+(mode==='disk'?' (inclusive o arquivo em disco — uma cópia fica em data/backups)':'')+'?'))return;
+  const st=data.settings;data=emptyData();data.settings=st;recent.length=0;used.clear();sel=null;area.value='';$('cLive').textContent='Aguardando…';
+  save(true,true);refreshWords();render();
+};
+init();
+})();
+</script></body></html>

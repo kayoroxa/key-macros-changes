@@ -1,0 +1,49 @@
+;; ====================================================================
+;; KeyMacros — configuração na linguagem do kanata
+;; Referência completa: https://github.com/jtroo/kanata/blob/main/docs/config.adoc
+;;
+;; Como funciona:
+;;   - Segure a tecla LÍDER (Windows) + uma letra = macro.
+;;   - Tocar o Windows sozinho continua abrindo o menu Iniciar.
+;;   - O Ctrl direito vira a tecla Windows (para Win+E, Win+D, ...).
+;;
+;; Camadas cujo nome começa com km- podem ser editadas pelo app (aba Macros).
+;; As ações do app (abrir/focar programas, sites, digitar texto...) usam
+;; (push-msg ...). Lista completa na aba "Ajuda" do editor.
+;; ====================================================================
+
+(defcfg
+  process-unmapped-keys yes
+  ;; teclados ABNT2 (AltGr): evita Ctrl "preso"
+  windows-altgr add-lctl-release
+)
+
+(defsrc)
+
+(defalias
+  ;; tocar = tecla original; segurar + outra tecla = camada de macros (sem atraso)
+  lider (tap-hold-press 0 200 lmet (layer-while-held km-lider))
+)
+
+(deflayermap (base)
+  lmet @lider
+  rctl lmet
+)
+
+;; Líder + tecla
+(deflayermap (km-lider)
+  n (tap-hold 0 1000 (push-msg app "notepad.exe") (push-msg run "calc.exe"))
+  e (push-msg app "explorer.exe" "explorer.exe" class=CabinetWClass)
+  b (push-msg browser)
+  y (push-msg browser-tab "youtube.com")
+  ___ XX
+)
+
+;; Combinações (teclas apertadas JUNTAS). Para usar, tire o #| |# e acrescente
+;; "concurrent-tap-hold yes" no defcfg — ou crie pelo editor (aba Macros →
+;; camada "Combinações"), que faz isso sozinho.
+#|
+(defchordsv2
+  (r t) f14 40 first-release ()
+)
+|#
