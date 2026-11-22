@@ -16,6 +16,8 @@
 mod actions;
 mod backup;
 mod chords;
+mod clock;
+mod features;
 mod trigger;
 mod daemon;
 mod editor;

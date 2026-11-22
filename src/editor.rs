@@ -9,7 +9,7 @@
 use crate::kbd::{self, Act, Binding, Layer};
 use crate::theme::{self as th, icon, Ico, Look};
 use crate::trigger::{self, Trigger};
-use crate::{backup, daemon, msg, paths, remap, scancode, win};
+use crate::{backup, daemon, features::{self, Features}, msg, paths, remap, scancode, win};
 use eframe::egui::{self, pos2, vec2, Align, Align2, Color32, Layout, Margin, Rect, RichText, Sense, Stroke, StrokeKind, Ui, Vec2};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -25,6 +25,39 @@ const SKY: Color32 = Color32::from_rgb(56, 189, 248);
 const ORANGE: Color32 = Color32::from_rgb(245, 158, 11);
 const VIOLET: Color32 = Color32::from_rgb(167, 139, 250);
 const CYAN: Color32 = Color32::from_rgb(34, 211, 238);
+/// Miniatura da tela: relógio embaixo à direita, seta para o canto de cima.
+fn clock_illustration(ui: &mut Ui) {
+    let (r, _) = ui.allocate_exact_size(vec2(230.0, 140.0), Sense::hover());
+    let p = ui.painter_at(r);
+    p.rect(r, 10, th::FIELD, Stroke::new(1.0, th::BORDER_HI), StrokeKind::Inside);
+    // barra de tarefas
+    let tb = Rect::from_min_max(pos2(r.left() + 1.0, r.bottom() - 16.0), pos2(r.right() - 1.0, r.bottom() - 1.0));
+    p.rect_filled(tb, 0, th::CARD_HOVER);
+    let (w, h) = (48.0, 16.0);
+    let x = r.right() - w - 8.0;
+    let top_min = pos2(x, r.top() + 8.0);
+    let bot_min = pos2(x, tb.top() - h - 5.0);
+    let chip = |min: egui::Pos2, fill: Color32, edge: Color32| {
+        let cr = Rect::from_min_size(min, vec2(w, h));
+        p.rect(cr, 4, fill, Stroke::new(1.0, edge), StrokeKind::Inside);
+        p.text(cr.center(), Align2::CENTER_CENTER, "14:32", th::regular(10.0), th::TEXT);
+    };
+    chip(top_min, th::CARD, th::ACCENT);
+    chip(bot_min, th::CARD, th::BORDER_HI);
+    // seta tracejada subindo
+    let cx = x + w / 2.0;
+    let (y0, y1) = (bot_min.y - 2.0, top_min.y + h + 2.0);
+    let mut y = y1;
+    while y < y0 {
+        p.line_segment([pos2(cx, y), pos2(cx, (y + 4.0).min(y0))], Stroke::new(1.5, th::ACCENT_HI));
+        y += 7.0;
+    }
+    p.add(egui::Shape::convex_polygon(vec![pos2(cx, y1 - 1.0), pos2(cx - 4.0, y1 + 6.0), pos2(cx + 4.0, y1 + 6.0)], th::ACCENT_HI, Stroke::NONE));
+    // cursor do mouse chegando perto
+    let t = pos2(bot_min.x + 6.0, bot_min.y - 22.0);
+    p.add(egui::Shape::convex_polygon(vec![t, t + vec2(0.0, 13.0), t + vec2(9.0, 9.0)], Color32::WHITE, Stroke::new(1.0, Color32::BLACK)));
+}
+
 /// largura da coluna "Ao tocar" / "Ao segurar por" (alinha os seletores)
 const HEAD_W: f32 = 250.0;
 
@@ -33,6 +66,7 @@ enum Tab {
     Macros,
     Code,
     Remap,
+    Features,
     Help,
 }
 
@@ -1107,14 +1141,22 @@ struct Editor {
     icons: IconCache,
     scancode: Result<Option<Vec<scancode::Mapping>>, String>,
     daemon_running: bool,
+    autostart: bool,
     kb_active: bool,
     last_poll: Instant,
     new_layer: String,
     new_layer_keys: String,
+    /// captura da tecla da nova camada (modal aberto pelo botão)
+    new_layer_cap: bool,
+    new_layer_held: Vec<String>,
+    new_layer_got: Vec<String>,
     /// o que ativa cada camada km-*
     triggers: HashMap<String, Trigger>,
     lead: LeadEdit,
     remap: RemapForm,
+    /// recursos opcionais (aba Recursos)
+    features: Features,
+    feat_status: Option<String>,
 }
 
 /// Edição da tecla líder da camada aberta.
@@ -1146,7 +1188,10 @@ impl Editor {
     fn new(cfg: PathBuf) -> Self {
         let _ = paths::ensure_config(&cfg);
         let text = std::fs::read_to_string(&cfg).unwrap_or_default();
+        let features = features::load(&cfg);
         let mut e = Editor {
+            features,
+            feat_status: None,
             cfg,
             disk_text: text.clone(),
             text,
@@ -1168,10 +1213,14 @@ impl Editor {
             icons: IconCache::default(),
             scancode: scancode::read_system(),
             daemon_running: false,
+            autostart: daemon::autostart_enabled(),
             kb_active: false,
             last_poll: Instant::now(),
             new_layer: String::new(),
             new_layer_keys: String::new(),
+            new_layer_cap: false,
+            new_layer_held: vec![],
+            new_layer_got: vec![],
             triggers: HashMap::new(),
             lead: LeadEdit::default(),
             remap: RemapForm { reg_edit: vec![], reg_pending: false, add_from: 0x003A, add_to: 0x001D, add_reg: false, leader_phys: 0xE05B, leader_reg: false },
@@ -1370,7 +1419,7 @@ impl Editor {
     fn top_bar(&mut self, ui: &mut Ui) {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
-            for (t, ic, label) in [(Tab::Macros, icon::KEYBOARD, "Macros"), (Tab::Code, icon::CODE, "Código (.kbd)"), (Tab::Remap, icon::SWAP, "Troca de teclas"), (Tab::Help, icon::HELP, "Ajuda")] {
+            for (t, ic, label) in [(Tab::Macros, icon::KEYBOARD, "Macros"), (Tab::Code, icon::CODE, "Código (.kbd)"), (Tab::Remap, icon::SWAP, "Troca de teclas"), (Tab::Features, icon::CUBE, "Recursos"), (Tab::Help, icon::HELP, "Ajuda")] {
                 let look = if self.tab == t { Look::Primary } else { Look::Ghost };
                 if th::button(ui, look, ic, label).clicked() {
                     self.tab = t;
@@ -1407,6 +1456,15 @@ impl Editor {
                         let _ = std::process::Command::new(exe).arg("--paused").arg("--cfg").arg(&self.cfg).spawn();
                     }
                 }
+                let mut on = self.autostart;
+                if th::checkbox(ui, &mut on).changed() {
+                    match daemon::set_autostart(on, &self.cfg) {
+                        Ok(()) => self.autostart = on,
+                        Err(e) => self.status = Some((false, format!("Não consegui mudar o início com o Windows: {e}"))),
+                    }
+                }
+                ui.label(RichText::new("Iniciar com o Windows").color(th::WEAK))
+                    .on_hover_text("Abre o KeyMacros sozinho ao ligar o computador (recompila se o código mudou)");
                 let (fg, bg, main, extra) = match (self.daemon_running, self.kb_active) {
                     (true, true) => (th::GREEN, th::GREEN_BG, "teclado: ATIVO", " (atalhos valendo)"),
                     (true, false) => (th::YELLOW, th::YELLOW_BG, "teclado: pausado", " (normal)"),
@@ -1524,7 +1582,9 @@ impl Editor {
 
     fn new_layer_popup(&mut self, ui: &mut Ui) {
         let r = th::button(ui, Look::Normal, icon::ADD, "Camada");
-        egui::Popup::menu(&r).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
+        // com a janela de captura aberta, clicar nela não pode fechar este popup
+        let close = if self.new_layer_cap { egui::PopupCloseBehavior::IgnoreClicks } else { egui::PopupCloseBehavior::CloseOnClickOutside };
+        egui::Popup::menu(&r).close_behavior(close).show(|ui| {
             ui.set_min_width(340.0);
             ui.label(RichText::new("Nova camada").font(th::semibold(15.0)));
             ui.add_space(4.0);
@@ -1532,12 +1592,18 @@ impl Editor {
             let keys = trigger::parse_keys(&self.new_layer_keys);
             let (rr, _) = ui.allocate_exact_size(vec2(310.0, 46.0), Sense::hover());
             if keys.is_empty() {
-                ui.painter().text(rr.left_center(), Align2::LEFT_CENTER, "digite abaixo — ex.: r t", th::regular(13.0), th::WEAK);
+                ui.painter().text(rr.left_center(), Align2::LEFT_CENTER, "nenhuma tecla ainda", th::regular(13.0), th::WEAK);
             } else {
                 let caps: Vec<String> = keys.iter().map(|k| key_label(k)).collect();
                 paint_caps(ui, rr.min.x, rr.center().y, &caps, 38.0);
             }
-            field(ui, &mut self.new_layer_keys, "ex.: r t   ou   f14", true, 310.0);
+            if th::button(ui, Look::Normal, icon::KEYBOARD, "Capturar tecla…").on_hover_text("Abre uma janela: aperte a tecla (ou as teclas juntas)").clicked() {
+                self.new_layer_cap = true;
+                self.new_layer_held.clear();
+                self.new_layer_got.clear();
+            }
+            ui.add_space(4.0);
+            field(ui, &mut self.new_layer_keys, "ou digite: r t   ou   f14", true, 310.0);
             ui.label(RichText::new("Nome (opcional)").color(th::WEAK));
             field(ui, &mut self.new_layer, "ex.: premiere", false, 310.0);
             ui.add_space(4.0);
@@ -1567,6 +1633,80 @@ impl Editor {
         });
     }
 
+    /// Modal que captura a tecla da nova camada. Teclas apertadas juntas viram um acorde
+    /// (ex.: R e T juntas = "r t"; Tab = "tab"). Esc cancela.
+    fn new_layer_capture(&mut self, ctx: &egui::Context) {
+        if !self.new_layer_cap {
+            return;
+        }
+        let evs: Vec<(String, bool)> = ctx.input(|i| {
+            i.events
+                .iter()
+                .filter_map(|e| match e {
+                    egui::Event::Key { key, pressed, repeat: false, .. } if *key != egui::Key::Escape => key_name(*key).map(|n| (n, *pressed)),
+                    _ => None,
+                })
+                .collect()
+        });
+        for (k, pressed) in evs {
+            if pressed {
+                // nenhuma tecla segurada: começou uma combinação nova, a anterior sai
+                if self.new_layer_held.is_empty() {
+                    self.new_layer_got.clear();
+                }
+                if !self.new_layer_held.contains(&k) {
+                    self.new_layer_held.push(k.clone());
+                }
+                if !self.new_layer_got.contains(&k) {
+                    self.new_layer_got.push(k);
+                }
+            } else {
+                self.new_layer_held.retain(|x| *x != k);
+            }
+        }
+
+        let cap: Vec<String> = self.new_layer_got.iter().map(|k| key_label(k)).collect();
+        let mut done: Option<bool> = None;
+        let m = egui::Modal::new(egui::Id::unique("new-layer-capture")).frame(th::section()).show(ctx, |ui| {
+            ui.set_width(340.0);
+            ui.vertical_centered(|ui| {
+                ui.label(RichText::new("Aperte a tecla da camada").font(th::semibold(17.0)));
+                ui.add_space(4.0);
+                ui.label(RichText::new("Teclas juntas valem como uma. Se errar, aperte outra.").color(th::WEAK));
+                ui.add_space(12.0);
+                if cap.is_empty() {
+                    ui.label(RichText::new("…").size(34.0).color(th::WEAK));
+                } else {
+                    let (r, _) = ui.allocate_exact_size(vec2(caps_width(&cap, 56.0), 70.0), Sense::hover());
+                    paint_caps(ui, r.min.x, r.center().y, &cap, 56.0);
+                }
+                ui.add_space(14.0);
+            });
+            ui.horizontal(|ui| {
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    ui.spacing_mut().item_spacing.x = 10.0;
+                    if ui.add_enabled_ui(!cap.is_empty(), |ui| th::button(ui, Look::Primary, icon::CHECK, "Aceitar")).inner.clicked() {
+                        done = Some(true);
+                    }
+                    if th::button(ui, Look::Normal, "", "Cancelar").clicked() {
+                        done = Some(false);
+                    }
+                });
+            });
+        });
+        if m.should_close() && done.is_none() {
+            done = Some(false);
+        }
+        if let Some(ok) = done {
+            if ok {
+                self.new_layer_keys = self.new_layer_got.join(" ");
+            }
+            self.new_layer_cap = false;
+            self.new_layer_held.clear();
+            self.new_layer_got.clear();
+        }
+    }
+
     fn toolbar(&mut self, ui: &mut Ui) {
         let before = self.sel_layer.clone();
         ui.horizontal(|ui| {
@@ -1574,6 +1714,7 @@ impl Editor {
             ui.label(RichText::new("Camada:").font(th::semibold(15.5)));
             self.layer_picker(ui);
             self.new_layer_popup(ui);
+            self.new_layer_capture(ui.ctx());
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 ui.add(
                     egui::TextEdit::singleline(&mut self.search)
@@ -2578,6 +2719,73 @@ impl Editor {
         }
     }
 
+    fn features_tab(&mut self, ui: &mut Ui) {
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            th::section().show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.heading("Recursos");
+                ui.label(RichText::new("Funções extras do KeyMacros. Todas vêm desativadas: ligue só as que quiser.").color(th::WEAK));
+            });
+            ui.add_space(12.0);
+            th::section().show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.horizontal(|ui| {
+                    ui.heading("Relógio na tela");
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        let mut on = self.features.clock;
+                        if th::toggle(ui, &mut on).changed() {
+                            self.features.clock = on;
+                            self.save_features();
+                        }
+                        let (txt, c) = if on { ("Ligado", th::GREEN) } else { ("Desligado", th::WEAK) };
+                        ui.label(RichText::new(txt).color(c));
+                    });
+                });
+                ui.add_space(10.0);
+                ui.horizontal_top(|ui| {
+                    ui.vertical(|ui| {
+                        ui.set_max_width(400.0);
+                        for line in [
+                            "Mostra a hora (horas:minutos) pequena no canto da tela, igual ao relógio do Windows.",
+                            "Fica com 50% de opacidade, para você ver o que está por baixo.",
+                            "Se o mouse chegar perto dele, ele sobe para o canto superior direito na hora, sem animação. Quando o mouse sai, ele volta para baixo.",
+                            "Passa o clique por ele, então não atrapalha o mouse.",
+                            "Não aparece em gravações nem em compartilhamento de tela (exige Windows 10 versão 2004 ou superior).",
+                        ] {
+                            ui.label(RichText::new(format!("•  {line}")).color(th::TEXT));
+                            ui.add_space(4.0);
+                        }
+                        ui.add_space(6.0);
+                        ui.label(RichText::new("A escolha fica salva. O relógio aparece enquanto o KeyMacros estiver rodando.").color(th::WEAK).small());
+                    });
+                    ui.add_space(24.0);
+                    clock_illustration(ui);
+                });
+            });
+            if let Some(m) = &self.feat_status {
+                ui.add_space(8.0);
+                ui.label(RichText::new(m).color(th::WEAK));
+            }
+        });
+    }
+
+    /// Grava `keymacros-recursos.json` e avisa o daemon para aplicar na hora.
+    fn save_features(&mut self) {
+        let msg = match features::save(&self.cfg, self.features) {
+            Ok(()) => {
+                let h = daemon::find_daemon();
+                if h.is_null() {
+                    "Salvo. O relógio aparece quando o KeyMacros estiver rodando.".to_string()
+                } else {
+                    unsafe { windows_sys::Win32::UI::WindowsAndMessaging::PostMessageW(h, daemon::WM_KM_FEATURES, 0, 0) };
+                    "Salvo e aplicado.".to_string()
+                }
+            }
+            Err(e) => format!("Não consegui salvar: {e}"),
+        };
+        self.feat_status = Some(msg);
+    }
+
     fn help_tab(&mut self, ui: &mut Ui) {
         egui::ScrollArea::vertical().show(ui, |ui| {
             th::section().show(ui, |ui| {
@@ -2636,6 +2844,7 @@ impl eframe::App for Editor {
             Tab::Macros => self.macros_tab(ui),
             Tab::Code => self.code_tab(ui),
             Tab::Remap => self.remap_tab(ui),
+            Tab::Features => self.features_tab(ui),
             Tab::Help => self.help_tab(ui),
         });
     }
@@ -2645,6 +2854,7 @@ impl eframe::App for Editor {
 pub fn run(cfg: PathBuf, tab: Option<&str>) -> i32 {
     let tab = match tab {
         Some("troca") => Tab::Remap,
+        Some("recursos") => Tab::Features,
         Some("codigo") => Tab::Code,
         Some("ajuda") => Tab::Help,
         _ => Tab::Macros,

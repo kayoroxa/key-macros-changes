@@ -169,5 +169,9 @@ fn main() {
             std::thread::sleep(Duration::from_millis(100));
         }
     }
+    // com --startup (atalho na pasta Iniciar do Windows) só deixa na bandeja, sem abrir o editor
+    if std::env::args().any(|a| a == "--startup") {
+        return;
+    }
     let _ = Command::new(&app).arg("editor").current_dir(&dist).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn();
 }

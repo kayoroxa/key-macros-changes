@@ -2,7 +2,7 @@
 //! `push-msg` pelo TCP e executa as ações. Não usa nenhum framework de UI
 //! (só Win32), por isso fica com poucos MB de RAM.
 
-use crate::{actions, msg, paths, win};
+use crate::{actions, clock, features, msg, paths, win};
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::io::{BufRead, BufReader, Write};
@@ -29,6 +29,8 @@ pub const CLASS: &str = "KeyMacrosDaemon";
 pub const WM_KM_TOGGLE_PAUSE: u32 = WM_APP + 10;
 pub const WM_KM_RELOAD: u32 = WM_APP + 11;
 pub const WM_KM_SET_PAUSED: u32 = WM_APP + 12; // wparam = 1 pausa, 0 ativa
+/// o editor salvou a aba Recursos: reaplica (ex.: liga/desliga o relógio)
+pub const WM_KM_FEATURES: u32 = WM_APP + 13;
 
 const WM_KM_EVENT: u32 = WM_APP + 1;
 const WM_KM_TRAY: u32 = WM_APP + 2;
@@ -205,14 +207,26 @@ fn balloon(hwnd: HWND, title: &str, text: &str, error: bool) {
 
 const RUN_KEY: &str = "Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 
-fn autostart_enabled() -> bool {
+pub fn autostart_enabled() -> bool {
     let k = win::wide(RUN_KEY);
     let v = win::wide("KeyMacros");
     let mut len = 0u32;
     unsafe { RegGetValueW(HKEY_CURRENT_USER, k.as_ptr(), v.as_ptr(), RRF_RT_REG_SZ, std::ptr::null_mut(), std::ptr::null_mut(), &mut len) == 0 }
 }
 
-fn set_autostart(on: bool, cfg: &Path) -> Result<(), String> {
+/// Comando gravado em HKCU\...\Run. Se o KeyMacros.exe da raiz do projeto existir
+/// (dist\ fica dentro dela), usa o launcher com --startup: ele recompila se o código
+/// mudou e depois abre só a bandeja. Senão, abre este executável direto.
+fn autostart_command(cfg: &Path) -> Result<String, String> {
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let launcher = exe.parent().and_then(|p| p.parent()).map(|p| p.join("KeyMacros.exe"));
+    if let Some(l) = launcher.filter(|p| p.exists()) {
+        return Ok(format!("\"{}\" --startup", l.display()));
+    }
+    Ok(format!("\"{}\" --cfg \"{}\"", exe.display(), cfg.display()))
+}
+
+pub fn set_autostart(on: bool, cfg: &Path) -> Result<(), String> {
     let k = win::wide(RUN_KEY);
     let v = win::wide("KeyMacros");
     unsafe {
@@ -221,8 +235,7 @@ fn set_autostart(on: bool, cfg: &Path) -> Result<(), String> {
             return Err("não consegui abrir a chave Run".into());
         }
         let r = if on {
-            let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-            let cmd = win::wide(&format!("\"{}\" --cfg \"{}\"", exe.display(), cfg.display()));
+            let cmd = win::wide(&autostart_command(cfg)?);
             RegSetValueExW(hk, v.as_ptr(), 0, REG_SZ, cmd.as_ptr().cast(), (cmd.len() * 2) as u32)
         } else {
             RegDeleteValueW(hk, v.as_ptr())
@@ -345,13 +358,26 @@ fn state_file(cfg: &Path) -> PathBuf {
     cfg.with_file_name("keymacros-estado.txt")
 }
 
-/// Lembra se o teclado estava ativo. Sem arquivo = pausado (seguro).
+/// Lembra se o teclado estava ativo. Sem arquivo = ativo (padrão); só "pausado" pausa.
 fn save_active(cfg: &Path, active: bool) {
     let _ = std::fs::write(state_file(cfg), if active { "ativo" } else { "pausado" });
 }
 
 fn was_active(cfg: &Path) -> bool {
-    std::fs::read_to_string(state_file(cfg)).map(|t| t.trim() == "ativo").unwrap_or(false)
+    std::fs::read_to_string(state_file(cfg)).map(|t| t.trim() != "pausado").unwrap_or(true)
+}
+
+/// Na primeira execução liga "Iniciar com o Windows". Uma marca de arquivo garante que,
+/// se o usuário desligar depois, não liguemos de novo.
+fn default_autostart_once(cfg: &Path) {
+    let marker = cfg.with_file_name("keymacros-autostart-padrao.txt");
+    if marker.exists() {
+        return;
+    }
+    if !autostart_enabled() {
+        let _ = set_autostart(true, cfg);
+    }
+    let _ = std::fs::write(marker, "feito");
 }
 
 fn set_paused(s: &mut State, paused: bool) {
@@ -524,6 +550,14 @@ fn trim_ram() {
     unsafe { SetProcessWorkingSetSize(GetCurrentProcess(), usize::MAX, usize::MAX) };
 }
 
+/// Liga/desliga os recursos conforme `keymacros-recursos.json`.
+fn apply_features(s: &mut State) {
+    let f = features::load(&s.cfg);
+    if let Err(e) = clock::set_enabled(f.clock) {
+        balloon(s.hwnd, "Relógio na tela", &e, true);
+    }
+}
+
 fn drain_events() {
     loop {
         let ev = QUEUE.lock().unwrap().pop_front();
@@ -570,7 +604,11 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
         WM_KM_RELOAD => {
             with(reload);
         }
+        WM_KM_FEATURES => {
+            with(apply_features);
+        }
         WM_DESTROY => {
+            let _ = clock::set_enabled(false);
             with(|s| {
                 stop_kanata(s);
                 let n = nid(s.hwnd);
@@ -611,6 +649,7 @@ pub fn run(cfg: PathBuf, port: u16, start_paused: bool) -> i32 {
         win::message_box("KeyMacros", &format!("Não consegui criar a config em {}:\n{e}", cfg.display()), MB_ICONERROR);
         return 1;
     }
+    default_autostart_once(&cfg);
 
     let (tx, rx) = channel::<msg::Cmd>();
     let tcp = Arc::new(Mutex::new(None));
@@ -671,6 +710,7 @@ pub fn run(cfg: PathBuf, port: u16, start_paused: bool) -> i32 {
         };
         STATE.with(|s| *s.borrow_mut() = Some(state));
         with(|s| tray_update(s, true));
+        with(apply_features);
         SetTimer(hwnd, TIMER_POLL, 1000, None);
 
         let ahk = win::running_exes().into_iter().any(|e| e.starts_with("autohotkey"));

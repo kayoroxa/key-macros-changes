@@ -343,6 +343,26 @@ pub fn chevron(ui: &Ui, rect: Rect, _v: &egui::style::WidgetVisuals, open: bool)
     ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, icon::CHEVRON, FontId::proportional(13.0), c);
 }
 
+/// Chave liga/desliga (azul quando ligada).
+pub fn toggle(ui: &mut Ui, on: &mut bool) -> Response {
+    let (r, mut resp) = ui.allocate_exact_size(vec2(44.0, 24.0), Sense::click());
+    if resp.clicked() {
+        *on = !*on;
+        resp.mark_changed();
+    }
+    let hot = resp.hovered();
+    let p = ui.painter();
+    let (fill, edge) = if *on {
+        (if hot { ACCENT_HI } else { ACCENT }, ACCENT)
+    } else {
+        (FIELD, if hot { ACCENT_HI } else { BORDER_HI })
+    };
+    p.rect(r, 12, fill, Stroke::new(1.5, edge), StrokeKind::Inside);
+    let kx = if *on { r.right() - 12.0 } else { r.left() + 12.0 };
+    p.circle_filled(egui::pos2(kx, r.center().y), 8.0, if *on { Color32::WHITE } else { WEAK });
+    resp.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
 /// Caixa de seleção azul (como no Windows 11).
 pub fn checkbox(ui: &mut Ui, on: &mut bool) -> Response {
     let (r, mut resp) = ui.allocate_exact_size(Vec2::splat(22.0), Sense::click());
