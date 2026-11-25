@@ -318,7 +318,8 @@ impl Binding {
                 if *ms == 0 || *ms > 60000 {
                     return Err("tempo de segurar deve ser entre 1ms e 60s".into());
                 }
-                format!("{key} (tap-hold 0 {ms} {tap} {})", act.render()?)
+                // tap-hold-press (igual às teclas líder): evita o toque disparar também a ação de segurar
+                format!("{key} (tap-hold-press 0 {ms} {tap} {})", act.render()?)
             }
         })
     }
@@ -382,7 +383,7 @@ fn binding_from(key: &Sx, action: &Sx, src: &str) -> Binding {
 fn binding_raw(key: &Sx, action: &Sx, src: &str) -> Binding {
     let key = src[key.span()].to_string();
     if let Some(items) = action.list() {
-        if matches!(action.head(), Some("tap-hold")) && items.len() == 5 {
+        if matches!(action.head(), Some("tap-hold" | "tap-hold-press")) && items.len() == 5 {
             if let (Some(_), Some(ms)) = (items[1].atom(), items[2].atom().and_then(|m| m.parse::<u32>().ok())) {
                 return Binding { key, tap: act_from(&items[3], src), hold: Some((ms, act_from(&items[4], src))), name: String::new() };
             }
@@ -559,7 +560,7 @@ mod tests {
     #[test]
     fn render_hold_and_errors() {
         let b = Binding { key: "t".into(), tap: Act::Text("olá".into()), hold: Some((5000, Act::Run { cmd: "calc.exe".into(), args: "".into() })), name: String::new() };
-        assert_eq!(b.render().unwrap(), r#"t (tap-hold 0 5000 (push-msg type "olá") (push-msg run "calc.exe"))"#);
+        assert_eq!(b.render().unwrap(), r#"t (tap-hold-press 0 5000 (push-msg type "olá") (push-msg run "calc.exe"))"#);
         let bad = Binding { key: "a b".into(), tap: Act::Nothing, hold: None, name: String::new() };
         assert!(bad.render().is_err());
         assert!(Act::Raw("(oops".into()).render().is_err());

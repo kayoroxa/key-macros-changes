@@ -97,6 +97,15 @@ pub fn info(h: HWND) -> WinInfo {
     WinInfo { hwnd: h as isize, title: window_text(h), class: class_name(h), exe, path, cloaked: cloaked != 0 }
 }
 
+fn zero_area(h: HWND) -> bool {
+    let mut r: RECT = unsafe { std::mem::zeroed() };
+    unsafe { GetWindowRect(h, &mut r) != 0 && (r.right - r.left <= 0 || r.bottom - r.top <= 0) }
+}
+
+pub fn is_minimized(h: HWND) -> bool {
+    unsafe { IsIconic(h) != 0 }
+}
+
 /// Janelas "de verdade" (as que aparecem no Alt+Tab): visíveis, com título,
 /// sem dono e que não são tool windows. Ordenadas por HWND (ordem estável).
 pub fn list_windows() -> Vec<WinInfo> {
@@ -111,11 +120,22 @@ pub fn list_windows() -> Vec<WinInfo> {
     for h in hs {
         let h = h as HWND;
         unsafe {
-            if IsWindowVisible(h) == 0 || !GetWindow(h, GW_OWNER).is_null() {
+            if IsWindowVisible(h) == 0 {
                 continue;
             }
             let ex = GetWindowLongPtrW(h, GWL_EXSTYLE) as u32;
             if ex & WS_EX_TOOLWINDOW != 0 {
+                continue;
+            }
+            // Janelas de tamanho zero não são janelas de verdade: apps Delphi (ex.: oCam)
+            // têm uma janela-mãe "TApplication" invisível com título. Ativá-la não mostra o app.
+            if zero_area(h) {
+                continue;
+            }
+            // Janela com dona (diálogo/popup) não entra... exceto quando a dona é essa
+            // janela-fantasma: no Delphi o formulário principal pertence à TApplication.
+            let owner = GetWindow(h, GW_OWNER);
+            if !owner.is_null() && !zero_area(owner) {
                 continue;
             }
         }
@@ -248,30 +268,89 @@ pub fn type_text(s: &str) {
 /// Traz a janela para frente de forma confiável (o Windows bloqueia
 /// SetForegroundWindow de processos em segundo plano).
 pub fn activate(h: HWND) -> bool {
+    let t_all = Instant::now();
+    let mut trace: Vec<String> = vec![];
+    let ok = activate_inner(h, &mut trace);
+    // diagnóstico: um arquivo ao lado do exe com o que aconteceu em cada tentativa de foco
+    foco_log(&format!("{} ({} ms) {}", if ok { "OK  " } else { "FALHA" }, t_all.elapsed().as_millis(), trace.join(" | ")));
+    ok
+}
+
+/// Descreve uma janela para o log: hwnd, exe, título curto, minimizada?
+fn desc(h: HWND) -> String {
+    if h.is_null() {
+        return "nenhuma".into();
+    }
+    let i = info(h);
+    format!("{}:{}:'{}'{}", h as isize, i.exe, i.title.chars().take(20).collect::<String>(), if unsafe { IsIconic(h) } != 0 { ":MIN" } else { "" })
+}
+
+fn foco_log(line: &str) {
+    use std::io::Write;
+    let Ok(exe) = std::env::current_exe() else { return };
+    let p = exe.with_file_name("keymacros-foco.log");
+    if std::fs::metadata(&p).map(|m| m.len() > 200_000).unwrap_or(false) {
+        let _ = std::fs::remove_file(&p);
+    }
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&p) {
+        let ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
+        let _ = writeln!(f, "{ms} {line}");
+    }
+}
+
+fn activate_inner(h: HWND, trace: &mut Vec<String>) -> bool {
     unsafe {
+        trace.push(format!("alvo={} fg_antes={}", desc(h), desc(GetForegroundWindow())));
         if IsIconic(h) != 0 {
             ShowWindow(h, SW_RESTORE);
+            // espera a restauração terminar antes de tentar pôr em primeiro plano
+            let t = Instant::now();
+            while IsIconic(h) != 0 && t.elapsed() < Duration::from_millis(300) {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            let still = IsIconic(h) != 0;
+            trace.push(format!("restaurar->{}ms ainda_min={still}", t.elapsed().as_millis()));
+            if still {
+                // programa elevado: o Windows não deixa restaurar. Quem chamou decide o que fazer.
+                return false;
+            }
         }
-        if GetForegroundWindow() == h {
-            return true;
-        }
-        // Um evento de teclado nosso libera o "foreground lock".
-        send(&[key_input(VK_MASK, false), key_input(VK_MASK, true)]);
-        let fg = GetForegroundWindow();
-        let fg_tid = GetWindowThreadProcessId(fg, std::ptr::null_mut());
-        let me = GetCurrentThreadId();
-        let attached = fg_tid != 0 && fg_tid != me && AttachThreadInput(me, fg_tid, 1) != 0;
-        SetForegroundWindow(h);
-        BringWindowToTop(h);
-        if attached {
-            AttachThreadInput(me, fg_tid, 0);
-        }
-        let t = Instant::now();
-        while t.elapsed() < Duration::from_millis(300) {
+        // O Windows às vezes recusa a primeira tentativa (a disputa de foco com o
+        // app que estava na frente). Tenta de novo em vez de desistir.
+        for attempt in 0..3 {
             if GetForegroundWindow() == h {
+                trace.push(format!("t{attempt}: ja era o foco"));
                 return true;
             }
-            std::thread::sleep(Duration::from_millis(10));
+            // Um evento de teclado nosso libera o "foreground lock".
+            send(&[key_input(VK_MASK, false), key_input(VK_MASK, true)]);
+            let fg = GetForegroundWindow();
+            let fg_tid = GetWindowThreadProcessId(fg, std::ptr::null_mut());
+            let me = GetCurrentThreadId();
+            let attached = fg_tid != 0 && fg_tid != me && AttachThreadInput(me, fg_tid, 1) != 0;
+            let sfw = SetForegroundWindow(h);
+            let err = GetLastError();
+            BringWindowToTop(h);
+            if attached {
+                AttachThreadInput(me, fg_tid, 0);
+            }
+            if attempt == 2 {
+                // último recurso: alternar a janela como o Alt+Tab faz
+                SwitchToThisWindow(h, 1);
+            }
+            let t = Instant::now();
+            let mut got = false;
+            while t.elapsed() < Duration::from_millis(150) {
+                if GetForegroundWindow() == h {
+                    got = true;
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            trace.push(format!("t{attempt}: attach={attached} sfw={sfw} err={err} ficou={got}({}ms) fg_agora={}", t.elapsed().as_millis(), desc(GetForegroundWindow())));
+            if got {
+                return true;
+            }
         }
         GetForegroundWindow() == h
     }
@@ -559,4 +638,89 @@ pub fn file_icon_rgba(path: &str, size: i32) -> Option<Vec<u8>> {
         DestroyIcon(icon);
         out
     }
+}
+
+// ---------------------------------------------------------------------------
+// Administrador (UIPI)
+//
+// O Windows não deixa um processo comum ver/injetar teclas em janelas de programas
+// abertos "como administrador" (UIPI). Para os atalhos valerem em qualquer janela,
+// o KeyMacros (e o kanata, que herda o token) roda elevado.
+
+fn token_info<T: Default>(class: windows_sys::Win32::Security::TOKEN_INFORMATION_CLASS) -> Option<T> {
+    use windows_sys::Win32::Security::GetTokenInformation;
+    unsafe {
+        let mut tok: HANDLE = std::ptr::null_mut();
+        if OpenProcessToken(GetCurrentProcess(), windows_sys::Win32::Security::TOKEN_QUERY, &mut tok) == 0 {
+            return None;
+        }
+        let mut v = T::default();
+        let mut len = 0u32;
+        let ok = GetTokenInformation(tok, class, (&mut v as *mut T).cast(), std::mem::size_of::<T>() as u32, &mut len);
+        CloseHandle(tok);
+        (ok != 0).then_some(v)
+    }
+}
+
+/// O processo atual está rodando como administrador?
+pub fn is_elevated() -> bool {
+    token_info::<u32>(windows_sys::Win32::Security::TokenElevation).is_some_and(|v| v != 0)
+}
+
+/// O usuário é administrador mas este processo está com o token limitado (UAC)?
+/// Só nesse caso faz sentido pedir elevação sem senha.
+pub fn can_elevate() -> bool {
+    // TokenElevationTypeLimited = 3
+    token_info::<i32>(windows_sys::Win32::Security::TokenElevationType) == Some(3)
+}
+
+/// Deixa janelas deste processo receberem estas mensagens de processos NÃO elevados
+/// (editor, launcher, Explorer). Sem isso o UIPI descarta o PostMessage.
+pub fn allow_messages_from_lower(msgs: &[u32]) {
+    for &m in msgs {
+        unsafe { ChangeWindowMessageFilter(m, MSGFLT_ADD) };
+    }
+}
+
+/// Abre `file params` como administrador (aviso do UAC). Com `wait`, espera terminar
+/// e devolve o código de saída.
+pub fn run_elevated(file: &str, params: &str, wait: bool) -> Result<u32, String> {
+    use windows_sys::Win32::UI::Shell::{ShellExecuteExW, SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW};
+    let verb = wide("runas");
+    let f = wide(file);
+    let p = wide(params);
+    let mut info = SHELLEXECUTEINFOW {
+        cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
+        fMask: if wait { SEE_MASK_NOCLOSEPROCESS } else { 0 },
+        lpVerb: verb.as_ptr(),
+        lpFile: f.as_ptr(),
+        lpParameters: p.as_ptr(),
+        nShow: SW_SHOWNORMAL,
+        ..Default::default()
+    };
+    if unsafe { ShellExecuteExW(&mut info) } == 0 {
+        let e = std::io::Error::last_os_error();
+        return Err(if e.raw_os_error() == Some(1223) { "cancelado no aviso de administrador".into() } else { format!("não consegui pedir permissão de administrador: {e}") });
+    }
+    if !wait || info.hProcess.is_null() {
+        return Ok(0);
+    }
+    let mut code = 1u32;
+    unsafe {
+        WaitForSingleObject(info.hProcess, INFINITE);
+        GetExitCodeProcess(info.hProcess, &mut code);
+        CloseHandle(info.hProcess);
+    }
+    Ok(code)
+}
+
+/// Junta argumentos numa linha de comando do Windows (com aspas quando preciso).
+pub fn join_args<S: AsRef<str>>(args: &[S]) -> String {
+    args.iter()
+        .map(|a| {
+            let a = a.as_ref();
+            if a.is_empty() || a.contains([' ', '\t', '"']) { format!("\"{}\"", a.replace('"', "\\\"")) } else { a.to_string() }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }

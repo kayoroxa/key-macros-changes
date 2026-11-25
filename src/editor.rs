@@ -9,7 +9,7 @@
 use crate::kbd::{self, Act, Binding, Layer};
 use crate::theme::{self as th, icon, Ico, Look};
 use crate::trigger::{self, Trigger};
-use crate::{backup, daemon, features::{self, Features}, msg, paths, remap, scancode, win};
+use crate::{backup, daemon, features::{self, Features}, msg, paths, remap, scancode, update, win};
 use eframe::egui::{self, pos2, vec2, Align, Align2, Color32, Layout, Margin, Rect, RichText, Sense, Stroke, StrokeKind, Ui, Vec2};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -639,8 +639,42 @@ fn layer_broken(l: &Layer) -> bool {
 enum Pick {
     Edit(usize),
     Delete(usize),
+    /// (índice do atalho na camada atual, nome da camada de destino)
+    Move(usize, String),
     New,
     NewKey(String),
+}
+
+/// Submenu "Mover para camada" do botão direito. `targets` = (nome, rótulo).
+fn move_menu(ui: &mut Ui, targets: &[(String, String)], idx: usize) -> Option<Pick> {
+    let mut pick = None;
+    ui.menu_button("Mover para camada", |ui| {
+        if targets.is_empty() {
+            ui.label(RichText::new("Não há outra camada").color(th::WEAK));
+        }
+        for (name, label) in targets {
+            if ui.button(label).clicked() {
+                pick = Some(Pick::Move(idx, name.clone()));
+                ui.close();
+            }
+        }
+    });
+    pick
+}
+
+/// Nome curto de um atalho para o aviso de conflito.
+fn binding_short(b: &Binding) -> String {
+    if !b.name.trim().is_empty() {
+        return b.name.trim().to_string();
+    }
+    match &b.tap {
+        Act::App { exe, .. } => exe.clone(),
+        Act::Keys(k) => key_label(k),
+        Act::Text(t) => format!("texto \"{}\"", t.chars().take(20).collect::<String>()),
+        Act::Run { cmd, .. } => cmd.clone(),
+        Act::Site { .. } => "site".into(),
+        _ => "outra ação".into(),
+    }
 }
 
 /// Pinta o conteúdo de um cartão: tecla(s) | ícone + título + "tocar"/"segurar".
@@ -700,7 +734,7 @@ fn paint_card(ui: &Ui, rect: Rect, caps: &[String], rows: &[Row]) {
 }
 
 /// Grade de cartões + um cartão "novo" no fim.
-fn cards_grid(ui: &mut Ui, items: &[Item], selected: Option<usize>, new_active: bool, new_label: &str, hl: Option<usize>, hovered: &mut Option<usize>) -> Option<Pick> {
+fn cards_grid(ui: &mut Ui, items: &[Item], targets: &[(String, String)], selected: Option<usize>, new_active: bool, new_label: &str, hl: Option<usize>, hovered: &mut Option<usize>) -> Option<Pick> {
     let gap = 10.0;
     let avail = ui.available_width();
     let cols = ((avail + gap) / (205.0 + gap)).floor().clamp(1.0, 8.0) as usize;
@@ -738,6 +772,9 @@ fn cards_grid(ui: &mut Ui, items: &[Item], selected: Option<usize>, new_active: 
                     resp.context_menu(|ui| {
                         if ui.button("Editar").clicked() {
                             pick = Some(Pick::Edit(it.idx));
+                        }
+                        if let Some(p) = move_menu(ui, targets, it.idx) {
+                            pick = Some(p);
                         }
                         if ui.button("Excluir").clicked() {
                             pick = Some(Pick::Delete(it.idx));
@@ -796,6 +833,22 @@ fn main_field(f: &mut ActForm) -> Option<(&'static str, &mut String, &'static st
         Kind::Raw if !f.raw.contains('\n') => Some(("Código:", &mut f.raw, "(push-msg ...)", true)),
         _ => None,
     }
+}
+
+/// Opções ao escolher uma janela na lista. Se mais de uma janela tem o mesmo
+/// .exe (ex.: vários apps/sites no Edge), grava `title=...` para o atalho
+/// focar a janela certa e não a primeira do Edge. Remove um `title=` antigo.
+fn window_opts(old: &str, w: &win::WinInfo, same_exe: usize) -> String {
+    let mut parts: Vec<String> = kbd::split_opts(old)
+        .into_iter()
+        .filter(|o| !o.starts_with("title="))
+        .map(|o| if o.contains(' ') { format!("\"{o}\"") } else { o })
+        .collect();
+    let t = w.title.trim();
+    if same_exe > 1 && !t.is_empty() && !t.contains('"') {
+        parts.push(format!("title=\"{t}\""));
+    }
+    parts.join(" ")
 }
 
 fn has_extras(f: &ActForm) -> bool {
@@ -902,6 +955,12 @@ fn act_row(ui: &mut Ui, id: &str, enabled: bool, head: impl FnOnce(&mut Ui), f: 
                                 if ui.selectable_label(false, label).clicked() {
                                     f.exe = w.exe.clone();
                                     f.run = w.path.clone();
+                                    let same_exe = windows.iter().filter(|x| x.exe == w.exe).count();
+                                    f.opts = window_opts(&f.opts, w, same_exe);
+                                    if same_exe > 1 {
+                                        // mostra o filtro `title=` na hora, em vez de escondê-lo em "Mais opções"
+                                        *more = true;
+                                    }
                                     ui.close();
                                 }
                             }
@@ -1152,11 +1211,17 @@ struct Editor {
     new_layer_got: Vec<String>,
     /// o que ativa cada camada km-*
     triggers: HashMap<String, Trigger>,
+    /// mover atalho esperando confirmação: (índice, camada de destino)
+    pending_move: Option<(usize, String)>,
     lead: LeadEdit,
     remap: RemapForm,
     /// recursos opcionais (aba Recursos)
     features: Features,
     feat_status: Option<String>,
+    /// versões anteriores da config, para o Ctrl+Z (a última no fim)
+    undo: Vec<String>,
+    /// atualização do GitHub (pop-up)
+    upd: UpdateState,
 }
 
 /// Edição da tecla líder da camada aberta.
@@ -1222,8 +1287,11 @@ impl Editor {
             new_layer_held: vec![],
             new_layer_got: vec![],
             triggers: HashMap::new(),
+            pending_move: None,
             lead: LeadEdit::default(),
             remap: RemapForm { reg_edit: vec![], reg_pending: false, add_from: 0x003A, add_to: 0x001D, add_reg: false, leader_phys: 0xE05B, leader_reg: false },
+            undo: vec![],
+            upd: UpdateState { check: Some(update::check_in_background()), ..Default::default() },
         };
         e.reload_registry();
         // primeiro uso: guarda o registro como estava antes de o app mexer em qualquer coisa
@@ -1269,8 +1337,48 @@ impl Editor {
         self.text != self.disk_text
     }
 
-    /// Valida e salva. Antes de sobrescrever, guarda o arquivo antigo em `backups\`.
+    /// Valida e salva. Guarda a versão anterior para o Ctrl+Z.
     fn save(&mut self) -> bool {
+        let old = self.disk_text.clone();
+        let ok = self.write_config();
+        if ok && old != self.disk_text {
+            self.push_undo(old);
+        }
+        ok
+    }
+
+    fn push_undo(&mut self, text: String) {
+        self.undo.push(text);
+        if self.undo.len() > 100 {
+            self.undo.remove(0);
+        }
+    }
+
+    /// Ctrl+Z: volta à versão anterior da config. Na aba Macros já grava de novo.
+    fn undo_last(&mut self) {
+        let Some(prev) = self.undo.pop() else {
+            self.status = Some((false, "Nada para desfazer.".into()));
+            return;
+        };
+        let cur = std::mem::replace(&mut self.text, prev.clone());
+        self.reparse();
+        if self.tab == Tab::Macros && !self.write_config() {
+            self.text = cur;
+            self.reparse();
+            self.undo.push(prev);
+            return;
+        }
+        self.load_form(Form::default());
+        self.lead = LeadEdit::default();
+        self.status = Some(if self.tab == Tab::Macros {
+            (true, "Desfeito.".into())
+        } else {
+            (true, "Desfeito. Clique em Salvar para gravar.".into())
+        });
+    }
+
+    /// Valida e grava. Antes de sobrescrever, guarda o arquivo antigo em `backups\`.
+    fn write_config(&mut self) -> bool {
         if let Err(e) = paths::check_text(&self.text, Some(&self.cfg)) {
             self.status = Some((false, format!("Não salvei — a config tem erro:\n{e}")));
             return false;
@@ -1374,11 +1482,110 @@ impl Editor {
         }
     }
 
+    /// Grava uma mudança feita pela UI (salva na hora; se a config ficar inválida, volta e mostra o erro).
+    fn commit(&mut self, new: String) -> Result<(), String> {
+        if self.edit_config_and_save(Ok(new)) {
+            Ok(())
+        } else {
+            Err(self.status.as_ref().map(|s| s.1.clone()).unwrap_or_default())
+        }
+    }
+
     fn set_layer_bindings(&mut self, bindings: Vec<Binding>) -> Result<(), String> {
         let new = kbd::replace_layer(&self.text, &self.sel_layer, &bindings)?;
-        self.text = new;
-        self.reparse();
-        Ok(())
+        self.commit(new)
+    }
+
+    /// Rótulo de uma camada: as teclas que a abrem (ex.: `F13 + C`) ou o nome.
+    fn layer_label(&self, name: &str) -> String {
+        let caps = trigger_caps(&self.triggers, name, 0);
+        if caps.is_empty() {
+            format!("{} (sem tecla)", layer_title(name))
+        } else {
+            caps.join(" + ")
+        }
+    }
+
+    /// Camadas que podem receber o atalho: (nome, rótulo).
+    fn move_targets(&self) -> Vec<(String, String)> {
+        self.layers.iter().filter(|l| l.name != self.sel_layer).map(|l| (l.name.clone(), self.layer_label(&l.name))).collect()
+    }
+
+    /// Move o atalho `idx` da camada atual para `to`. Se a camada de destino já
+    /// tem a mesma tecla e `replace` é false, não mexe em nada e devolve Ok(false)
+    /// para a tela perguntar. Com `replace`, a tecla antiga do destino é trocada.
+    fn move_binding(&mut self, idx: usize, to: &str, replace: bool) -> Result<bool, String> {
+        let src_name = self.sel_layer.clone();
+        let mut src = self.layers.iter().find(|l| l.name == src_name).map(|l| l.bindings.clone()).ok_or("camada não encontrada")?;
+        let mut dst = self.layers.iter().find(|l| l.name == to).map(|l| l.bindings.clone()).ok_or("camada de destino não encontrada")?;
+        if idx >= src.len() {
+            return Err("atalho não encontrado".into());
+        }
+        let b = src[idx].clone();
+        if let Some(j) = dst.iter().position(|x| x.key == b.key) {
+            if !replace {
+                return Ok(false);
+            }
+            dst.remove(j);
+        }
+        dst.push(b);
+        src.remove(idx);
+        // duas trocas no texto e um único salvamento
+        let t1 = kbd::replace_layer(&self.text, to, &dst)?;
+        let t2 = kbd::replace_layer(&t1, &src_name, &src)?;
+        self.commit(t2)?;
+        self.status = Some((true, format!("Atalho movido para {}. Salvo automaticamente.", self.layer_label(to))));
+        Ok(true)
+    }
+
+    /// Aviso antes de mover quando a camada de destino já tem a mesma tecla.
+    fn move_conflict_modal(&mut self, ctx: &egui::Context) {
+        let Some((idx, to)) = self.pending_move.clone() else { return };
+        let Some(src) = self.layers.iter().find(|l| l.name == self.sel_layer) else {
+            self.pending_move = None;
+            return;
+        };
+        let Some(b) = src.bindings.get(idx).cloned() else {
+            self.pending_move = None;
+            return;
+        };
+        let existing = self.layers.iter().find(|l| l.name == to).and_then(|l| l.bindings.iter().find(|x| x.key == b.key)).cloned();
+        let dst_label = self.layer_label(&to);
+        let mut choice: Option<bool> = None;
+        let m = egui::Modal::new(egui::Id::unique("move-conflict")).frame(th::section()).show(ctx, |ui| {
+            ui.set_width(380.0);
+            ui.label(RichText::new("Tecla já existe na camada").font(th::semibold(17.0)));
+            ui.add_space(6.0);
+            let key = key_label(&b.key);
+            let what = existing.as_ref().map(binding_short).unwrap_or_default();
+            ui.label(RichText::new(format!("Já existe a tecla {key} em {dst_label} ({what}).")).color(th::TEXT));
+            ui.label(RichText::new("Quer substituir pela tecla que você está movendo? A antiga será apagada.").color(th::WEAK));
+            ui.add_space(12.0);
+            ui.horizontal(|ui| {
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    ui.spacing_mut().item_spacing.x = 10.0;
+                    if th::button(ui, Look::Primary, icon::CHECK, "Substituir").clicked() {
+                        choice = Some(true);
+                    }
+                    if th::button(ui, Look::Normal, "", "Cancelar").clicked() {
+                        choice = Some(false);
+                    }
+                });
+            });
+        });
+        if m.should_close() && choice.is_none() {
+            choice = Some(false);
+        }
+        match choice {
+            Some(true) => {
+                self.pending_move = None;
+                if let Err(e) = self.move_binding(idx, &to, true) {
+                    self.status = Some((false, e));
+                }
+            }
+            Some(false) => self.pending_move = None,
+            None => {}
+        }
     }
 
     fn post_daemon(&self, msg: u32, wp: usize) {
@@ -1430,18 +1637,18 @@ impl Editor {
             ui.add_space(8.0);
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 ui.spacing_mut().item_spacing.x = 10.0;
-                // Salvar (mais à direita)
+                // estado do salvamento (mais à direita). Macros salva sozinho; Código tem o botão Salvar.
                 let dirty = self.dirty();
-                let mut j = th::icon_job(icon::SAVE, "Salvar", th::regular(15.0), th::TEXT, th::TEXT);
-                if dirty {
-                    j.append("●", 12.0, egui::TextFormat::simple(th::regular(11.0), th::YELLOW));
-                    j.append(" não salvo", 0.0, egui::TextFormat::simple(th::regular(14.0), th::YELLOW));
-                } else {
-                    j.append(icon::CHECK, 12.0, egui::TextFormat::simple(th::regular(13.0), th::GREEN));
-                    j.append(" Salvo", 0.0, egui::TextFormat::simple(th::regular(14.0), th::GREEN));
-                }
-                if th::button_job(ui, Look::Normal, j, 0.0, Sense::click()).on_hover_text("Valida e salva (Ctrl+S)").clicked() && dirty {
-                    let _ = self.save();
+                match self.tab {
+                    Tab::Macros => {
+                        let j = th::icon_job(icon::CHECK, "Salvo automaticamente", th::semibold(14.5), th::GREEN, th::GREEN);
+                        th::pill(ui, th::GREEN, th::GREEN_BG, j).on_hover_text("Cada mudança feita aqui já é gravada. Ctrl+Z desfaz a última.");
+                    }
+                    Tab::Code if dirty => {
+                        let j = th::icon_job("●", "Não salvo", th::semibold(14.5), th::YELLOW, th::YELLOW);
+                        th::pill(ui, th::YELLOW, th::YELLOW_BG, j).on_hover_text("Clique em Salvar (ou Ctrl+S) para gravar");
+                    }
+                    _ => {}
                 }
                 if self.daemon_running {
                     if self.kb_active {
@@ -1615,16 +1822,14 @@ impl Editor {
                     slug(self.new_layer.trim().trim_start_matches(kbd::MANAGED_PREFIX))
                 };
                 let name = format!("{}{}", kbd::MANAGED_PREFIX, base);
-                match trigger::create_layer(&self.text, &name, &keys) {
-                    Ok(t) => {
-                        self.text = t;
-                        self.reparse();
+                match trigger::create_layer(&self.text, &name, &keys).and_then(|t| self.commit(t)) {
+                    Ok(()) => {
                         self.sel_layer = name;
                         self.new_layer.clear();
                         self.new_layer_keys.clear();
                         self.load_form(Form::default());
                         self.lead = LeadEdit::default();
-                        self.status = Some((true, "Camada criada — adicione os atalhos e clique em Salvar para valer.".into()));
+                        self.status = Some((true, "Camada criada e salva automaticamente — adicione os atalhos.".into()));
                     }
                     Err(e) => self.status = Some((false, e)),
                 }
@@ -1715,6 +1920,7 @@ impl Editor {
             self.layer_picker(ui);
             self.new_layer_popup(ui);
             self.new_layer_capture(ui.ctx());
+            self.move_conflict_modal(ui.ctx());
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 ui.add(
                     egui::TextEdit::singleline(&mut self.search)
@@ -1859,14 +2065,12 @@ impl Editor {
             }
         });
         if delete {
-            match trigger::delete_layer(&self.text, &name) {
-                Ok(t) => {
-                    self.text = t;
-                    self.reparse();
+            match trigger::delete_layer(&self.text, &name).and_then(|t| self.commit(t)) {
+                Ok(()) => {
                     self.sel_layer = self.layers.first().map(|l| l.name.clone()).unwrap_or_default();
                     self.lead = LeadEdit::default();
                     self.load_form(Form::default());
-                    self.status = Some((true, "Camada apagada — clique em Salvar para valer.".into()));
+                    self.status = Some((true, "Camada apagada e salva automaticamente.".into()));
                 }
                 Err(e) => {
                     self.lead.confirm_delete = false;
@@ -1875,12 +2079,10 @@ impl Editor {
             }
         }
         if let Some(keys) = apply {
-            match trigger::set(&self.text, &name, &keys) {
-                Ok(t) => {
-                    self.text = t;
-                    self.reparse();
+            match trigger::set(&self.text, &name, &keys).and_then(|t| self.commit(t)) {
+                Ok(()) => {
                     self.lead = LeadEdit::default();
-                    self.status = Some((true, "Tecla líder trocada — clique em Salvar para valer.".into()));
+                    self.status = Some((true, "Tecla líder trocada e salva automaticamente.".into()));
                 }
                 Err(e) => self.status = Some((false, e)),
             }
@@ -1921,6 +2123,7 @@ impl Editor {
     }
 
     fn keyboard_view(&mut self, ui: &mut Ui, layer: &Layer, avail_h: f32, compact: bool, hovered: &mut Option<usize>) -> Option<Pick> {
+        let targets = self.move_targets();
         let items = self.binding_items(ui.ctx(), layer);
         let by_key: HashMap<&str, &Item> = items.iter().map(|it| (layer.bindings[it.idx].key.as_str(), it)).collect();
         let rows = kb_layout();
@@ -1982,6 +2185,9 @@ impl Editor {
                         pick = Some(Pick::Edit(idx));
                     }
                     resp.context_menu(|ui| {
+                        if let Some(p) = move_menu(ui, &targets, idx) {
+                            pick = Some(p);
+                        }
                         if ui.button("Excluir").clicked() {
                             pick = Some(Pick::Delete(idx));
                         }
@@ -2137,6 +2343,7 @@ impl Editor {
                 top_pick = self.keyboard_view(ui, &layer, kb_rect.height(), true, &mut hovered);
             });
             let hl = hovered.or(self.hl);
+            let targets = self.move_targets();
             let p = ui
                 .scope_builder(egui::UiBuilder::new().max_rect(cards_rect), |ui| {
                     egui::ScrollArea::vertical()
@@ -2144,7 +2351,7 @@ impl Editor {
                         .auto_shrink([false, false])
                         .show(ui, |ui| {
                             let items = self.binding_items(ui.ctx(), &layer);
-                            cards_grid(ui, &items, self.form.editing, self.form.editing.is_none() && (self.form.open || self.form.capturing), "Novo atalho", hl, &mut hovered)
+                            cards_grid(ui, &items, &targets, self.form.editing, self.form.editing.is_none() && (self.form.open || self.form.capturing), "Novo atalho", hl, &mut hovered)
                         })
                         .inner
                 })
@@ -2171,11 +2378,16 @@ impl Editor {
                 let mut v = layer.bindings.clone();
                 v.remove(i);
                 match self.set_layer_bindings(v) {
-                    Ok(()) => self.status = Some((true, "Atalho excluído — clique em Salvar para valer.".into())),
+                    Ok(()) => self.status = Some((true, "Atalho excluído e salvo automaticamente.".into())),
                     Err(e) => self.status = Some((false, e)),
                 }
                 self.load_form(Form::default());
             }
+            Some(Pick::Move(i, to)) => match self.move_binding(i, &to, false) {
+                Ok(true) => {}
+                Ok(false) => self.pending_move = Some((i, to)),
+                Err(e) => self.status = Some((false, e)),
+            },
             Some(Pick::New) => self.load_form(Form { capturing: true, ..Form::default() }),
             Some(Pick::NewKey(k)) => self.load_form(Form { key: k, open: true, ..Form::default() }),
             None => {}
@@ -2336,7 +2548,7 @@ impl Editor {
                     let mut v = layer.bindings.clone();
                     v.remove(i);
                     match self.set_layer_bindings(v) {
-                        Ok(()) => self.status = Some((true, "Atalho excluído — clique em Salvar para valer.".into())),
+                        Ok(()) => self.status = Some((true, "Atalho excluído e salvo automaticamente.".into())),
                         Err(e) => self.status = Some((false, e)),
                     }
                     self.load_form(Form::default());
@@ -2360,7 +2572,7 @@ impl Editor {
                 }
                 match self.set_layer_bindings(v) {
                     Ok(()) => {
-                        self.status = Some((true, "Atalho aplicado — clique em Salvar para valer.".into()));
+                        self.status = Some((true, "Atalho aplicado e salvo automaticamente.".into()));
                         // fecha o painel; reabre só em "Novo atalho" ou num card
                         self.load_form(Form::default());
                     }
@@ -2374,6 +2586,10 @@ impl Editor {
 
     fn code_tab(&mut self, ui: &mut Ui) {
         ui.horizontal(|ui| {
+            let dirty = self.dirty();
+            if th::button(ui, if dirty { Look::Primary } else { Look::Normal }, icon::SAVE, "Salvar").on_hover_text("Valida e salva (Ctrl+S)").clicked() && dirty {
+                let _ = self.save();
+            }
             if th::button(ui, Look::Normal, icon::CHECK, "Validar").clicked() {
                 self.status = Some(match paths::check_text(&self.text, Some(&self.cfg)) {
                     Ok(()) => (true, "Config válida.".into()),
@@ -2381,7 +2597,10 @@ impl Editor {
                 });
             }
             if th::button(ui, Look::Normal, icon::REFRESH, "Descartar alterações").clicked() {
-                self.text = self.disk_text.clone();
+                if dirty {
+                    let cur = std::mem::replace(&mut self.text, self.disk_text.clone());
+                    self.push_undo(cur);
+                }
                 self.reparse();
             }
             ui.label(RichText::new("Linguagem do kanata. Comentários: ;;   Camadas km-* aparecem na aba Macros.").color(th::WEAK));
@@ -2709,9 +2928,11 @@ impl Editor {
             Do::RestoreReg(p) => self.import_registry(&p, None),
             Do::LoadCfg(p) => match std::fs::read_to_string(&p) {
                 Ok(t) => {
-                    self.text = t;
-                    self.reparse();
-                    self.status = Some((true, format!("Backup {} carregado no editor. Clique em Salvar para valer.", p.file_name().unwrap_or_default().to_string_lossy())));
+                    let nome = p.file_name().unwrap_or_default().to_string_lossy().to_string();
+                    self.status = Some(match self.commit(t) {
+                        Ok(()) => (true, format!("Backup {nome} carregado e salvo (a config atual foi guardada em backups).")),
+                        Err(e) => (false, e),
+                    });
                 }
                 Err(e) => self.status = Some((false, e.to_string())),
             },
@@ -2742,13 +2963,25 @@ impl Editor {
                     });
                 });
                 ui.add_space(10.0);
+                let mut follow = self.features.clock_follow;
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Posição:").color(th::WEAK));
+                    let a = ui.radio_value(&mut follow, false, "Fixo (foge do mouse)").changed();
+                    let b = ui.radio_value(&mut follow, true, "Segue o mouse").changed();
+                    if a || b {
+                        self.features.clock_follow = follow;
+                        self.save_features();
+                    }
+                });
+                ui.add_space(10.0);
                 ui.horizontal_top(|ui| {
                     ui.vertical(|ui| {
                         ui.set_max_width(400.0);
                         for line in [
-                            "Mostra a hora (horas:minutos) pequena no canto da tela, igual ao relógio do Windows.",
+                            "Mostra a hora (horas:minutos) pequena na tela, igual ao relógio do Windows.",
                             "Fica com 50% de opacidade, para você ver o que está por baixo.",
-                            "Se o mouse chegar perto dele, ele sobe para o canto superior direito na hora, sem animação. Quando o mouse sai, ele volta para baixo.",
+                            "Fixo: fica no canto. Se o mouse chegar perto dele, ele sobe para o canto superior direito na hora, sem animação. Quando o mouse sai, ele volta para baixo.",
+                            "Segue o mouse: a hora fica sempre logo abaixo do cursor.",
                             "Passa o clique por ele, então não atrapalha o mouse.",
                             "Não aparece em gravações nem em compartilhamento de tela (exige Windows 10 versão 2004 ou superior).",
                         ] {
@@ -2827,14 +3060,154 @@ impl Editor {
     }
 }
 
+// ------------------------------------------------------------------ atualização (GitHub)
+
+#[derive(Clone)]
+enum UpdPhase {
+    /// commits novos no GitHub (mensagens, mais recentes primeiro)
+    Available(Vec<String>),
+    Working(String),
+    Failed(String),
+}
+
+#[derive(Default)]
+struct UpdateState {
+    check: Option<std::sync::mpsc::Receiver<Result<Option<Vec<String>>, String>>>,
+    work: Option<std::sync::mpsc::Receiver<update::Passo>>,
+    phase: Option<UpdPhase>,
+    /// aberto pelo início do Windows só para mostrar a atualização: "Depois" fecha a janela
+    so_atualizacao: bool,
+}
+
+impl Editor {
+    /// Recebe o resultado da checagem e o andamento da atualização (sem travar a janela).
+    fn poll_update(&mut self, ctx: &egui::Context) {
+        use std::sync::mpsc::TryRecvError;
+        if let Some(res) = self.upd.check.as_ref().map(|rx| rx.try_recv()) {
+            match res {
+                Err(TryRecvError::Empty) => {}
+                Ok(Ok(Some(commits))) => {
+                    self.upd.check = None;
+                    self.upd.phase = Some(UpdPhase::Available(commits));
+                }
+                // já está em dia, ou sem rede / sem git: não incomoda
+                _ => self.upd.check = None,
+            }
+        }
+        let mut fim: Option<Result<(), String>> = None;
+        if let Some(rx) = &self.upd.work {
+            loop {
+                match rx.try_recv() {
+                    Ok(update::Passo::Texto(t)) => self.upd.phase = Some(UpdPhase::Working(t)),
+                    Ok(update::Passo::Pronto(r)) => {
+                        fim = Some(r);
+                        break;
+                    }
+                    Err(TryRecvError::Empty) => break,
+                    Err(TryRecvError::Disconnected) => {
+                        fim = Some(Err("a atualização parou inesperadamente".into()));
+                        break;
+                    }
+                }
+            }
+        }
+        match fim {
+            None => {}
+            // o app novo é aberto pelo processo que foi disparado; esta janela só fecha
+            Some(Ok(())) => {
+                self.upd.work = None;
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+            Some(Err(e)) => {
+                self.upd.work = None;
+                self.upd.phase = Some(UpdPhase::Failed(e));
+            }
+        }
+        if self.upd.work.is_some() {
+            ctx.request_repaint_after(std::time::Duration::from_millis(200));
+        }
+    }
+
+    fn start_update(&mut self) {
+        self.upd.work = Some(update::atualizar_in_background(self.cfg.clone()));
+        self.upd.phase = Some(UpdPhase::Working("Baixando a nova versão do GitHub…".into()));
+    }
+
+    /// Pop-up: "Atualizar agora" / "Depois" (ou "Fechar", se a atualização falhou).
+    fn update_modal(&mut self, ctx: &egui::Context) {
+        let Some(phase) = self.upd.phase.clone() else { return };
+        let mut atualizar = false;
+        let mut depois = false;
+        egui::Modal::new(egui::Id::unique("update-modal")).frame(th::section()).show(ctx, |ui| {
+            ui.set_width(460.0);
+            match &phase {
+                UpdPhase::Available(commits) => {
+                    ui.label(RichText::new("Atualização disponível").font(th::semibold(17.0)));
+                    ui.add_space(4.0);
+                    ui.label(RichText::new("Tem mudanças novas no GitHub. Ao atualizar, o KeyMacros baixa, compila e reinicia sozinho.").color(th::WEAK));
+                    ui.add_space(8.0);
+                    for c in commits.iter().take(6) {
+                        ui.label(format!("•  {c}"));
+                    }
+                    if commits.len() > 6 {
+                        ui.label(RichText::new(format!("… e mais {}", commits.len() - 6)).color(th::WEAK));
+                    }
+                    ui.add_space(14.0);
+                    ui.horizontal(|ui| {
+                        if th::button(ui, Look::Primary, icon::REFRESH, "Atualizar agora").clicked() {
+                            atualizar = true;
+                        }
+                        if th::button(ui, Look::Ghost, "", "Depois").clicked() {
+                            depois = true;
+                        }
+                    });
+                }
+                UpdPhase::Working(texto) => {
+                    ui.label(RichText::new("Atualizando o KeyMacros").font(th::semibold(17.0)));
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        ui.label(texto.as_str());
+                    });
+                    ui.add_space(6.0);
+                    ui.label(RichText::new("Não feche esta janela. Ao terminar, o app reinicia sozinho.").color(th::WEAK));
+                }
+                UpdPhase::Failed(e) => {
+                    ui.label(RichText::new("Não consegui atualizar").font(th::semibold(17.0)).color(th::RED));
+                    ui.add_space(8.0);
+                    ui.label(RichText::new(e.as_str()).color(th::WEAK));
+                    ui.add_space(14.0);
+                    if th::button(ui, Look::Ghost, "", "Fechar").clicked() {
+                        depois = true;
+                    }
+                }
+            }
+        });
+        if atualizar {
+            self.start_update();
+        }
+        if depois {
+            self.upd.phase = None;
+            if self.upd.so_atualizacao {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+        }
+    }
+}
+
 impl eframe::App for Editor {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         if self.last_poll.elapsed().as_secs() >= 2 {
             self.poll();
         }
+        self.poll_update(ui.ctx());
         ui.ctx().request_repaint_after(std::time::Duration::from_secs(2));
         if ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::S)) && self.dirty() {
             let _ = self.save();
+        }
+        // Ctrl+Z só quando nenhum campo de texto está em edição (o campo tem o seu próprio desfazer)
+        if !ui.ctx().egui_wants_keyboard_input() && ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::Z)) {
+            self.undo_last();
         }
         egui::Panel::top("top")
             .show_separator_line(false)
@@ -2847,11 +3220,13 @@ impl eframe::App for Editor {
             Tab::Features => self.features_tab(ui),
             Tab::Help => self.help_tab(ui),
         });
+        self.update_modal(ui.ctx());
     }
 }
 
 /// `tab`: aba inicial (`troca`, `codigo`, `ajuda`); padrão = Macros.
-pub fn run(cfg: PathBuf, tab: Option<&str>) -> i32 {
+/// `so_atualizacao`: aberto pelo início do Windows só para mostrar a atualização.
+pub fn run(cfg: PathBuf, tab: Option<&str>, so_atualizacao: bool) -> i32 {
     let tab = match tab {
         Some("troca") => Tab::Remap,
         Some("recursos") => Tab::Features,
@@ -2878,6 +3253,7 @@ pub fn run(cfg: PathBuf, tab: Option<&str>) -> i32 {
             th::install(&cc.egui_ctx);
             let mut e = Editor::new(cfg);
             e.tab = tab;
+            e.upd.so_atualizacao = so_atualizacao;
             Ok(Box::new(e))
         }),
     ) {

@@ -27,6 +27,7 @@ mod paths;
 mod remap;
 mod scancode;
 mod theme;
+mod update;
 mod win;
 
 fn attach_console() {
@@ -35,6 +36,16 @@ fn attach_console() {
 }
 
 fn main() {
+    // Quando roda como administrador, deixa o editor/launcher/Explorer (sem admin)
+    // continuarem mandando mensagens para as nossas janelas (o UIPI bloquearia).
+    win::allow_messages_from_lower(&[
+        windows_sys::Win32::UI::WindowsAndMessaging::WM_CLOSE,
+        daemon::WM_KM_TOGGLE_PAUSE,
+        daemon::WM_KM_RELOAD,
+        daemon::WM_KM_SET_PAUSED,
+        daemon::WM_KM_FEATURES,
+        unsafe { windows_sys::Win32::UI::WindowsAndMessaging::RegisterWindowMessageW(win::wide("TaskbarCreated").as_ptr()) },
+    ]);
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut cfg_arg: Option<String> = None;
     let mut port = paths::DEFAULT_PORT;
@@ -52,7 +63,10 @@ fn main() {
     let cfg = paths::config_path(cfg_arg.as_deref());
     let code = match rest.first().map(String::as_str) {
         None => daemon::run(cfg, port, paused),
-        Some("editor") => editor::run(cfg, rest.get(1).map(String::as_str)),
+        // aberto pelo início do Windows só para mostrar o pop-up de atualização
+        Some("editor") => editor::run(cfg, rest.get(1).map(String::as_str), rest.iter().any(|a| a == "--atualizacao")),
+        // chamado pelo próprio app depois de atualizar: troca o exe e reabre
+        Some("aplicar-atualizacao") => update::aplicar(&rest[1..], &cfg),
         Some(cmd) => {
             attach_console();
             cli(cmd, &rest[1..], &cfg)
@@ -134,6 +148,38 @@ fn cli(cmd: &str, rest: &[String], cfg: &std::path::Path) -> i32 {
                 }
             }
         }
+        "admin" => {
+            println!("administrador: {}  pode elevar: {}", win::is_elevated(), win::can_elevate());
+            0
+        }
+        // usado pelo próprio app (elevado) para ligar/desligar a tarefa de início
+        "autostart" => {
+            let on = !matches!(rest.first().map(String::as_str), Some("off"));
+            match daemon::set_autostart(on, cfg) {
+                Ok(()) => 0,
+                Err(e) => {
+                    eprintln!("{e}");
+                    1
+                }
+            }
+        }
+        "atualizacao" => match update::check() {
+            Ok(None) => {
+                println!("Atualizado: nenhuma mudança nova no GitHub.");
+                0
+            }
+            Ok(Some(commits)) => {
+                println!("Há {} atualização(ões) no GitHub:", commits.len());
+                for c in commits {
+                    println!("  • {c}");
+                }
+                0
+            }
+            Err(e) => {
+                eprintln!("Não consegui checar: {e}");
+                1
+            }
+        },
         "windows" => {
             for w in win::list_windows() {
                 let t: String = w.title.chars().take(60).collect();

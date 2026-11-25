@@ -81,11 +81,13 @@ pub fn exec(cmd: &Cmd, notify: &dyn Fn(&str)) -> Result<bool, String> {
     }
 }
 
-fn focus(w: &win::WinInfo, maximize: bool) {
-    win::activate(w.h());
+/// Traz a janela para frente. Devolve false se o Windows não deixou.
+fn focus(w: &win::WinInfo, maximize: bool) -> bool {
+    let ok = win::activate(w.h());
     if maximize {
         win::maximize(w.h());
     }
+    ok
 }
 
 /// Foca o app. Se ele já estiver em primeiro plano e tiver várias janelas,
@@ -98,8 +100,15 @@ fn app(f: &WinFilter, run: Option<&str>, args: Option<&str>, dir: Option<&str>, 
             Some(i) => (i + 1) % wins.len(),
             None => 0,
         };
-        focus(&wins[idx], maximize);
-        return Ok(true);
+        let w = &wins[idx];
+        if focus(w, maximize) {
+            return Ok(true);
+        }
+        // Minimizada e não dá para restaurar (programa elevado): relançar o programa faz a
+        // instância que já está aberta se mostrar sozinha. Segue para o caminho de abrir.
+        if !(win::is_minimized(w.h()) && launch && run.is_some()) {
+            return Err(format!("não consegui trazer \"{}\" para frente (detalhes em keymacros-foco.log).", f.exe.as_deref().unwrap_or("janela")));
+        }
     }
     if !launch {
         return Ok(false);
@@ -109,7 +118,7 @@ fn app(f: &WinFilter, run: Option<&str>, args: Option<&str>, dir: Option<&str>, 
     let t = Instant::now();
     while t.elapsed() < Duration::from_millis(wait_ms) {
         sleep(100);
-        if let Some(w) = win::find(f).into_iter().next() {
+        if let Some(w) = win::find(f).into_iter().find(|w| !win::is_minimized(w.h())) {
             // dá um instante para a janela terminar de nascer
             sleep(50);
             focus(&w, maximize);

@@ -8,7 +8,7 @@
 
 ## Depois de cada mudança
 
-- Sempre que modificar algo no código, reinicie o app: compile (`cargo build --release`), pare o `keymacros`, copie para `dist\keymacros.exe` e suba o `dist\keymacros.exe` sem flags. Não deixe a versão antiga rodando.
+- Sempre que modificar ou adicionar algo no código (função, opção, recurso, correção), reinicie o app: compile (`cargo build --release`), pare o `keymacros`, copie para `dist\keymacros.exe` e suba o `dist\keymacros.exe` sem flags. Não deixe a versão antiga rodando.
 
 ## Build
 

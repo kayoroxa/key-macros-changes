@@ -130,6 +130,14 @@ fn own_key_spans(sx: &Sx, key: &str) -> Vec<Range<usize>> {
     match sx.head() {
         Some("tap-hold" | "tap-hold-press" | "tap-hold-release") => items.get(3).and_then(atom_span).into_iter().collect(),
         Some("multi") => items[1..].iter().filter_map(atom_span).collect(),
+        // `(fork (tap-hold-press 0 200 tab ...) tab (mods))`: líder que não abre a camada com modificador
+        Some("fork") => {
+            let mut v = items.get(1).map(|l| own_key_spans(l, key)).unwrap_or_default();
+            if !v.is_empty() {
+                v.extend(items.get(2).and_then(atom_span));
+            }
+            v
+        }
         _ => vec![],
     }
 }
@@ -184,16 +192,28 @@ pub fn leader_key(src: &str) -> Option<String> {
 }
 
 /// O que a líder manda quando é só tocada: (texto, posição) do alias `lider`.
-fn leader_tap(src: &str) -> Option<(String, Range<usize>)> {
+fn leader_tap(src: &str) -> Option<(String, Vec<Range<usize>>)> {
     let top = kbd::parse(src).ok()?;
     for form in top.iter().filter(|f| f.head() == Some("defalias")) {
         let items = form.list()?;
         for kv in items[1..].chunks(2) {
             if kv.len() == 2 && kv[0].atom() == Some("lider") {
                 let l = kv[1].list()?;
-                if matches!(kv[1].head(), Some("tap-hold" | "tap-hold-press" | "tap-hold-release")) && l.len() >= 5 {
-                    if let Sx::Atom(a, span) = &l[3] {
-                        return Some((a.clone(), span.clone()));
+                // pode vir embrulhado num `(fork (tap-hold-press ...) tecla (modificadores))`
+                let (th, il, outer) = match (kv[1].head(), l.get(1)) {
+                    (Some("fork"), Some(inner)) => (inner, inner.list()?, Some(l)),
+                    _ => (&kv[1], l, None),
+                };
+                if matches!(th.head(), Some("tap-hold" | "tap-hold-press" | "tap-hold-release")) && il.len() >= 5 {
+                    if let Sx::Atom(a, span) = &il[3] {
+                        let mut spans = vec![span.clone()];
+                        // a tecla "normal" do fork (com modificador) é a mesma da líder
+                        if let Some(Sx::Atom(b, sp)) = outer.and_then(|o| o.get(2)) {
+                            if b == a {
+                                spans.push(sp.clone());
+                            }
+                        }
+                        return Some((a.clone(), spans));
                     }
                 }
             }
@@ -221,8 +241,8 @@ pub fn set_leader(src: &str, new_key: &str) -> Result<String, String> {
     }
     s = set(&s, new_key, LEADER_ALIAS)?;
     if old.as_deref() == Some(tap.as_str()) {
-        let (_, span) = leader_tap(&s).unwrap();
-        s = format!("{}{new_key}{}", &s[..span.start], &s[span.end..]);
+        let (_, spans) = leader_tap(&s).unwrap();
+        s = replace_spans(&s, spans, new_key);
     }
     kbd::parse(&s)?;
     Ok(s)
@@ -258,6 +278,25 @@ mod tests {
         assert!(s.contains("(tap-hold-press 0 200 caps "));
         assert!(s.contains(";; comentário"));
         assert_eq!(set_leader(&s, "caps").unwrap(), s);
+    }
+
+    #[test]
+    fn leader_with_modifier_guard() {
+        let cfg = CFG.replace(
+            "(tap-hold-press 0 200 f13 (layer-while-held km-lider))",
+            "(fork (tap-hold-press 0 200 f13 (layer-while-held km-lider)) f13 (lsft rsft lctl rctl lalt ralt lmet rmet))",
+        );
+        assert!(has_leader_alias(&cfg));
+        let s = set_leader(&cfg, "caps").unwrap();
+        assert!(s.contains("(fork (tap-hold-press 0 200 caps (layer-while-held km-lider)) caps (lsft"));
+        assert!(!s.contains("f13 (lsft"));
+        // líder numa tecla da base: `tab (fork (tap-hold-press 0 200 tab ...) tab (...))`
+        let t = set_action(&cfg, "tab", "(fork (tap-hold-press 0 200 tab (layer-while-held km-t)) tab (lsft rsft))").unwrap();
+        let m = move_key(&t, "tab", "f15").unwrap();
+        assert!(m.contains("f15 (fork (tap-hold-press 0 200 f15 (layer-while-held km-t)) f15 (lsft rsft))"));
+        // fork que não é líder (caps) não muda de comportamento ao mover a tecla
+        let c = move_key(&cfg, "caps", "f16").unwrap();
+        assert!(c.contains("f16 (fork ret caps (lsft rsft))"));
     }
 
     #[test]

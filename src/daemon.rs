@@ -2,7 +2,7 @@
 //! `push-msg` pelo TCP e executa as ações. Não usa nenhum framework de UI
 //! (só Win32), por isso fica com poucos MB de RAM.
 
-use crate::{actions, clock, features, msg, paths, win};
+use crate::{actions, clock, features, msg, paths, update, win};
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::io::{BufRead, BufReader, Write};
@@ -11,7 +11,7 @@ use std::os::windows::io::AsRawHandle;
 use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicIsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 use std::sync::mpsc::{channel, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
@@ -54,6 +54,7 @@ enum Ev {
 }
 
 static MAIN_HWND: AtomicIsize = AtomicIsize::new(0);
+static NOT_ADMIN_WARNING: AtomicBool = AtomicBool::new(false);
 static QUEUE: Mutex<VecDeque<Ev>> = Mutex::new(VecDeque::new());
 
 fn post(ev: Ev) {
@@ -203,30 +204,24 @@ fn balloon(hwnd: HWND, title: &str, text: &str, error: bool) {
 }
 
 // ---------------------------------------------------------------------------
-// Autostart (HKCU\...\Run)
+// Autostart
+//
+// Preferência: tarefa agendada "KeyMacros" (ao fazer logon, "executar com privilégios
+// mais altos"). Assim o KeyMacros já sobe como administrador SEM o aviso do UAC e os
+// atalhos valem até em janelas de programas abertos como administrador.
+// Fallback (usuário sem admin): HKCU\...\Run, como antes.
 
 const RUN_KEY: &str = "Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+const TASK: &str = "KeyMacros";
 
-pub fn autostart_enabled() -> bool {
+fn run_key_exists() -> bool {
     let k = win::wide(RUN_KEY);
     let v = win::wide("KeyMacros");
     let mut len = 0u32;
     unsafe { RegGetValueW(HKEY_CURRENT_USER, k.as_ptr(), v.as_ptr(), RRF_RT_REG_SZ, std::ptr::null_mut(), std::ptr::null_mut(), &mut len) == 0 }
 }
 
-/// Comando gravado em HKCU\...\Run. Se o KeyMacros.exe da raiz do projeto existir
-/// (dist\ fica dentro dela), usa o launcher com --startup: ele recompila se o código
-/// mudou e depois abre só a bandeja. Senão, abre este executável direto.
-fn autostart_command(cfg: &Path) -> Result<String, String> {
-    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-    let launcher = exe.parent().and_then(|p| p.parent()).map(|p| p.join("KeyMacros.exe"));
-    if let Some(l) = launcher.filter(|p| p.exists()) {
-        return Ok(format!("\"{}\" --startup", l.display()));
-    }
-    Ok(format!("\"{}\" --cfg \"{}\"", exe.display(), cfg.display()))
-}
-
-pub fn set_autostart(on: bool, cfg: &Path) -> Result<(), String> {
+fn set_run_key(cmd: Option<&str>) -> Result<(), String> {
     let k = win::wide(RUN_KEY);
     let v = win::wide("KeyMacros");
     unsafe {
@@ -234,18 +229,203 @@ pub fn set_autostart(on: bool, cfg: &Path) -> Result<(), String> {
         if RegOpenKeyExW(HKEY_CURRENT_USER, k.as_ptr(), 0, KEY_SET_VALUE, &mut hk) != 0 {
             return Err("não consegui abrir a chave Run".into());
         }
-        let r = if on {
-            let cmd = win::wide(&autostart_command(cfg)?);
-            RegSetValueExW(hk, v.as_ptr(), 0, REG_SZ, cmd.as_ptr().cast(), (cmd.len() * 2) as u32)
-        } else {
-            RegDeleteValueW(hk, v.as_ptr())
+        let r = match cmd {
+            Some(c) => {
+                let w = win::wide(c);
+                RegSetValueExW(hk, v.as_ptr(), 0, REG_SZ, w.as_ptr().cast(), (w.len() * 2) as u32)
+            }
+            None => RegDeleteValueW(hk, v.as_ptr()),
         };
         RegCloseKey(hk);
-        if r != 0 && on {
+        if r != 0 && cmd.is_some() {
             return Err(format!("erro {r}"));
         }
     }
     Ok(())
+}
+
+fn schtasks(args: &[&str]) -> bool {
+    Command::new("schtasks.exe")
+        .args(args)
+        .creation_flags(CREATE_NO_WINDOW)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+fn task_exists() -> bool {
+    schtasks(&["/Query", "/TN", TASK])
+}
+
+pub fn autostart_enabled() -> bool {
+    task_exists() || run_key_exists()
+}
+
+/// O que o início do Windows abre: (exe, argumentos). Se o KeyMacros.exe da raiz do
+/// projeto existir (dist\ fica dentro dela), usa o launcher com --startup: ele recompila
+/// se o código mudou e depois abre só a bandeja. Senão, abre este executável direto.
+fn autostart_target(cfg: &Path) -> Result<(PathBuf, String), String> {
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let launcher = exe.parent().and_then(|p| p.parent()).map(|p| p.join("KeyMacros.exe"));
+    if let Some(l) = launcher.filter(|p| p.exists()) {
+        return Ok((l, "--startup".into()));
+    }
+    Ok((exe, format!("--cfg \"{}\"", cfg.display())))
+}
+
+fn run_key_command(cfg: &Path) -> Result<String, String> {
+    let (exe, args) = autostart_target(cfg)?;
+    Ok(format!("\"{}\" {args}", exe.display()))
+}
+
+fn xml_escape(s: &str) -> String {
+    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
+}
+
+/// Cria/atualiza a tarefa agendada. Precisa estar rodando como administrador.
+fn create_task(cfg: &Path) -> Result<(), String> {
+    let (exe, args) = autostart_target(cfg)?;
+    let dir = exe.parent().map(|p| p.display().to_string()).unwrap_or_default();
+    let user = format!("{}\\{}", std::env::var("USERDOMAIN").unwrap_or_default(), std::env::var("USERNAME").unwrap_or_default());
+    // Prioridade 4 = normal (o padrão 7 deixaria o kanata "abaixo do normal");
+    // sem limite de tempo (o padrão mata a tarefa após 3 dias) e roda na bateria.
+    let xml = format!(
+        r#"<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo><Description>KeyMacros: atalhos valendo em qualquer janela (inclusive de administrador).</Description></RegistrationInfo>
+  <Triggers><LogonTrigger><Enabled>true</Enabled><UserId>{user}</UserId></LogonTrigger></Triggers>
+  <Principals><Principal id="Author"><UserId>{user}</UserId><LogonType>InteractiveToken</LogonType><RunLevel>HighestAvailable</RunLevel></Principal></Principals>
+  <Settings>
+    <MultipleInstancesPolicy>Parallel</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <AllowHardTerminate>false</AllowHardTerminate>
+    <StartWhenAvailable>false</StartWhenAvailable>
+    <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>
+    <IdleSettings><StopOnIdleEnd>false</StopOnIdleEnd><RestartOnIdle>false</RestartOnIdle></IdleSettings>
+    <AllowStartOnDemand>true</AllowStartOnDemand>
+    <Enabled>true</Enabled>
+    <Hidden>false</Hidden>
+    <RunOnlyIfIdle>false</RunOnlyIfIdle>
+    <WakeToRun>false</WakeToRun>
+    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
+    <Priority>4</Priority>
+  </Settings>
+  <Actions Context="Author"><Exec><Command>{exe}</Command><Arguments>{args}</Arguments><WorkingDirectory>{dir}</WorkingDirectory></Exec></Actions>
+</Task>
+"#,
+        user = xml_escape(&user),
+        exe = xml_escape(&exe.display().to_string()),
+        args = xml_escape(&args),
+        dir = xml_escape(&dir),
+    );
+    let file = std::env::temp_dir().join("keymacros-tarefa.xml");
+    let mut bytes = vec![0xFF, 0xFE];
+    for u in xml.encode_utf16() {
+        bytes.extend_from_slice(&u.to_le_bytes());
+    }
+    std::fs::write(&file, bytes).map_err(|e| format!("não consegui gravar {}: {e}", file.display()))?;
+    let ok = schtasks(&["/Create", "/TN", TASK, "/XML", &file.display().to_string(), "/F"]);
+    let _ = std::fs::remove_file(&file);
+    if ok {
+        Ok(())
+    } else {
+        Err("o schtasks não conseguiu criar a tarefa".into())
+    }
+}
+
+pub fn set_autostart(on: bool, cfg: &Path) -> Result<(), String> {
+    if !win::is_elevated() {
+        if win::can_elevate() {
+            // pede admin só para mexer na tarefa (aviso do UAC)
+            let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+            let args = win::join_args(&["autostart", if on { "on" } else { "off" }, "--cfg", &cfg.display().to_string()]);
+            return match win::run_elevated(&exe.display().to_string(), &args, true)? {
+                0 => Ok(()),
+                c => Err(format!("falhou (código {c})")),
+            };
+        }
+        // usuário sem admin: só dá para usar a chave Run
+        return if on { set_run_key(Some(&run_key_command(cfg)?)) } else { set_run_key(None) };
+    }
+    if on {
+        create_task(cfg)?;
+        let _ = set_run_key(None);
+    } else {
+        if task_exists() && !schtasks(&["/Delete", "/TN", TASK, "/F"]) {
+            return Err("não consegui apagar a tarefa agendada".into());
+        }
+        let _ = set_run_key(None);
+    }
+    Ok(())
+}
+
+/// Rodando como admin: migra a chave Run antiga para a tarefa agendada e mantém a
+/// tarefa apontando para o exe atual.
+///
+/// Só mexe quando precisa: recriar a tarefa (schtasks /Create /F + XML em %TEMP%) a cada
+/// inicialização é exatamente o padrão que o Defender marca como persistência suspeita
+/// (Behavior:Win32/Persistence.A!ml) e bloqueia o exe. Se a tarefa já aponta para o
+/// destino atual, não toca em nada.
+fn refresh_autostart(cfg: &Path) {
+    if !win::is_elevated() {
+        return;
+    }
+    if !run_key_exists() && !task_exists() {
+        return;
+    }
+    if !run_key_exists() && task_matches_target(cfg) {
+        return;
+    }
+    let _ = set_autostart(true, cfg);
+}
+
+/// A tarefa agendada "KeyMacros" já executa o destino atual (exe + argumentos)?
+fn task_matches_target(cfg: &Path) -> bool {
+    let Ok((exe, args)) = autostart_target(cfg) else { return false };
+    let out = Command::new("schtasks.exe")
+        .args(["/Query", "/TN", TASK, "/XML"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output();
+    let Ok(out) = out else { return false };
+    let xml = String::from_utf8_lossy(&out.stdout);
+    xml.contains(&xml_escape(&exe.display().to_string())) && xml.contains(&xml_escape(&args))
+}
+
+// ---------------------------------------------------------------------------
+// Administrador
+
+/// Reabre o KeyMacros como administrador. Primeiro tenta pela tarefa agendada (sem
+/// aviso do UAC); senão, pelo "Executar como administrador". `true` = outro processo
+/// assumiu e este deve sair.
+fn relaunch_elevated(cfg: &Path, port: u16, start_paused: bool) -> bool {
+    let plain = !start_paused && port == paths::DEFAULT_PORT && cfg == paths::config_path(None);
+    // trava contra laço: se acabamos de tentar pela tarefa e voltamos sem admin, pula
+    let mark = cfg.with_file_name("keymacros-elevando.txt");
+    let recent = std::fs::metadata(&mark).and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).is_some_and(|d| d < Duration::from_secs(60));
+    if plain && !recent && task_exists() {
+        let _ = std::fs::write(&mark, "tentando");
+        if schtasks(&["/Run", "/TN", TASK]) {
+            let t = std::time::Instant::now();
+            while t.elapsed() < Duration::from_secs(20) {
+                if !find_daemon().is_null() {
+                    return true;
+                }
+                std::thread::sleep(Duration::from_millis(150));
+            }
+        }
+    }
+    let Ok(exe) = std::env::current_exe() else { return false };
+    let mut args = vec!["--cfg".to_string(), cfg.display().to_string(), "--port".into(), port.to_string()];
+    if start_paused {
+        args.push("--paused".into());
+    }
+    win::run_elevated(&exe.display().to_string(), &win::join_args(&args), false).is_ok()
 }
 
 // ---------------------------------------------------------------------------
@@ -553,6 +733,7 @@ fn trim_ram() {
 /// Liga/desliga os recursos conforme `keymacros-recursos.json`.
 fn apply_features(s: &mut State) {
     let f = features::load(&s.cfg);
+    clock::set_follow(f.clock_follow);
     if let Err(e) = clock::set_enabled(f.clock) {
         balloon(s.hwnd, "Relógio na tela", &e, true);
     }
@@ -634,15 +815,49 @@ pub fn find_daemon() -> HWND {
     unsafe { FindWindowW(c.as_ptr(), std::ptr::null()) }
 }
 
+/// Checa o GitHub ao iniciar. Se houver atualização, abre o editor já com o pop-up
+/// (sem janela nenhuma se estiver em dia). Tenta de novo por uns 3 min porque,
+/// no início do Windows, a rede pode demorar a subir.
+fn update_on_start(cfg: &Path) {
+    for _ in 0..9 {
+        match update::check() {
+            Ok(None) => return,
+            Ok(Some(_)) => {
+                if let Ok(exe) = std::env::current_exe() {
+                    let _ = Command::new(exe).arg("editor").arg("--atualizacao").arg("--cfg").arg(cfg).spawn();
+                }
+                return;
+            }
+            Err(_) => std::thread::sleep(Duration::from_secs(20)),
+        }
+    }
+}
+
 pub fn run(cfg: PathBuf, port: u16, start_paused: bool) -> i32 {
     unsafe {
         let name = win::wide("Local\\KeyMacrosDaemon");
-        CreateMutexW(std::ptr::null(), 0, name.as_ptr());
-        if GetLastError() == ERROR_ALREADY_EXISTS {
+        let mut mutex = CreateMutexW(std::ptr::null(), 0, name.as_ptr());
+        // ACCESS_DENIED = já existe, criado por uma instância de administrador
+        if matches!(GetLastError(), ERROR_ALREADY_EXISTS | ERROR_ACCESS_DENIED) {
             // já está rodando: só abre o editor
             open_editor(&cfg);
             return 0;
         }
+        // Sem admin o Windows (UIPI) esconde as teclas das janelas abertas como
+        // administrador: os atalhos não valeriam lá. Reabre elevado.
+        if !win::is_elevated() && win::can_elevate() && std::env::var_os("KEYMACROS_SEM_ADMIN").is_none() {
+            CloseHandle(mutex);
+            if relaunch_elevated(&cfg, port, start_paused) {
+                return 0;
+            }
+            mutex = CreateMutexW(std::ptr::null(), 0, name.as_ptr());
+            if matches!(GetLastError(), ERROR_ALREADY_EXISTS | ERROR_ACCESS_DENIED) {
+                open_editor(&cfg);
+                return 0;
+            }
+            NOT_ADMIN_WARNING.store(true, Ordering::SeqCst);
+        }
+        let _ = mutex;
     }
     let start_paused = start_paused || !was_active(&cfg);
     if let Err(e) = paths::ensure_config(&cfg) {
@@ -650,6 +865,10 @@ pub fn run(cfg: PathBuf, port: u16, start_paused: bool) -> i32 {
         return 1;
     }
     default_autostart_once(&cfg);
+    {
+        let cfg = cfg.clone();
+        std::thread::spawn(move || refresh_autostart(&cfg));
+    }
 
     let (tx, rx) = channel::<msg::Cmd>();
     let tcp = Arc::new(Mutex::new(None));
@@ -712,12 +931,18 @@ pub fn run(cfg: PathBuf, port: u16, start_paused: bool) -> i32 {
         with(|s| tray_update(s, true));
         with(apply_features);
         SetTimer(hwnd, TIMER_POLL, 1000, None);
+        {
+            let cfg = cfg.clone();
+            std::thread::spawn(move || update_on_start(&cfg));
+        }
 
         let ahk = win::running_exes().into_iter().any(|e| e.starts_with("autohotkey"));
         if ahk && !start_paused {
             balloon(hwnd, "AutoHotkey está rodando", "Os atalhos do AHK e do kanata podem conflitar. Feche o AHK ou pause o KeyMacros.", true);
         }
-        if start_paused {
+        if NOT_ADMIN_WARNING.load(Ordering::SeqCst) {
+            balloon(hwnd, "KeyMacros sem administrador", "Os atalhos não vão funcionar em janelas abertas como administrador. Reabra o KeyMacros e aceite o aviso do Windows.", true);
+        } else if start_paused {
             balloon(hwnd, "KeyMacros pausado", "Teclado normal. Clique com o botão direito no ícone → Ativar teclado.", false);
         } else {
             with(start_kanata);

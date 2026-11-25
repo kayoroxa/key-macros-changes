@@ -25,6 +25,21 @@ pub enum Trigger {
     None,
 }
 
+/// Modificadores: segurando um deles, a tecla líder não abre a camada, manda a
+/// própria tecla na hora (ex.: Alt+Tab precisa do Tab apertado já no "down").
+pub const MODIFIERS: &[&str] = &["lsft", "rsft", "lctl", "rctl", "lalt", "ralt", "lmet", "rmet"];
+
+/// `(lsft rsft ...)` sem as teclas da própria líder (um líder que é modificador não se bloqueia).
+fn modifiers_except(keys: &[String]) -> String {
+    format!("({})", MODIFIERS.iter().filter(|m| !keys.iter().any(|k| k == *m)).copied().collect::<Vec<_>>().join(" "))
+}
+
+/// Líder de uma tecla: segurar abre a camada, tocar manda a tecla. Com modificador
+/// já segurado, manda a tecla imediatamente (a camada não abre).
+pub fn key_leader_action(key: &str, layer: &str) -> String {
+    format!("(fork (tap-hold-press 0 {HOLD_MS} {key} (layer-while-held {layer})) {key} {})", modifiers_except(&[key.to_string()]))
+}
+
 const LAYER_ACTIONS: &[&str] = &["layer-while-held", "layer-toggle", "layer-switch"];
 
 type Aliases<'a> = HashMap<String, &'a Sx>;
@@ -152,8 +167,9 @@ pub fn parse_keys(s: &str) -> Vec<String> {
     out
 }
 
-fn chord_action(layer: &str) -> String {
-    format!("(one-shot {ONE_SHOT_MS} (layer-while-held {layer}))")
+/// Combinação: abre a camada. Com modificador já segurado, as teclas saem normais.
+fn chord_action(layer: &str, keys: &[String]) -> String {
+    format!("(fork (one-shot {ONE_SHOT_MS} (layer-while-held {layer})) (multi {}) {})", keys.join(" "), modifiers_except(keys))
 }
 
 fn remove_chords_of(src: &str, layer: &str) -> Result<String, String> {
@@ -200,7 +216,7 @@ pub fn set(src: &str, layer: &str, keys: &[String]) -> Result<String, String> {
                     return Err(format!("a tecla {k} já faz `{}` na camada base — escolha outra ou mude pela aba Código", p.action));
                 }
                 let s = remove_chords_of(src, layer)?;
-                remap::set_action(&s, k, &format!("(tap-hold-press 0 {HOLD_MS} {k} (layer-while-held {layer}))"))?
+                remap::set_action(&s, k, &key_leader_action(k, layer))?
             }
         }
     } else {
@@ -229,8 +245,11 @@ pub fn set(src: &str, layer: &str, keys: &[String]) -> Result<String, String> {
             keep
         });
         match list.iter_mut().find(|c| chord_activates(c, layer, &al)) {
-            Some(c) => c.keys = keys.to_vec(),
-            None => list.push(chords::Chord::new(keys.to_vec(), Act::Raw(chord_action(layer)))),
+            Some(c) => {
+                c.keys = keys.to_vec();
+                c.action = Act::Raw(chord_action(layer, keys));
+            }
+            None => list.push(chords::Chord::new(keys.to_vec(), Act::Raw(chord_action(layer, keys)))),
         }
         chords::write(&s, &list)?
     };
@@ -295,7 +314,7 @@ mod tests {
     fn chord_layer_replaces_plain_chord() {
         let s = create_layer(USER, "km-rt", &["r".into(), "t".into()]).unwrap();
         assert_eq!(find(&s, "km-rt"), Trigger::Chord(vec!["r".into(), "t".into()]));
-        assert!(s.contains("(r t) (one-shot 2000 (layer-while-held km-rt)) 40 first-release ()"));
+        assert!(s.contains("(r t) (fork (one-shot 2000 (layer-while-held km-rt)) (multi r t) (lsft rsft lctl rctl lalt ralt lmet rmet)) 40 first-release ()"));
         assert!(!s.contains("(r t) f14"));
         assert!(s.contains("(deflayermap (km-rt)\n  ___ XX\n)"));
         // troca as teclas da combinação
@@ -304,12 +323,15 @@ mod tests {
         // vira uma tecla só (segurar)
         let s3 = set(&s2, "km-rt", &["f14".into()]).unwrap();
         assert_eq!(find(&s3, "km-rt"), Trigger::Key("f14".into()));
-        assert!(!s3.contains("km-rt)) 40"));
-        assert!(s3.contains("f14 (tap-hold-press 0 200 f14 (layer-while-held km-rt))"));
+        assert!(!s3.contains("km-rt))) 40"));
+        assert!(s3.contains("f14 (fork (tap-hold-press 0 200 f14 (layer-while-held km-rt)) f14 (lsft rsft lctl rctl lalt ralt lmet rmet))"));
         // e volta a ser combinação: some da base
         let s4 = set(&s3, "km-rt", &["g".into(), "h".into()]).unwrap();
         assert_eq!(find(&s4, "km-rt"), Trigger::Chord(vec!["g".into(), "h".into()]));
-        assert!(!s4.contains("f14 (tap-hold-press"));
+        assert!(!s4.contains("f14 (fork"));
+        // a líder que é modificador não bloqueia a si mesma
+        assert_eq!(key_leader_action("lctl", "km-x"), "(fork (tap-hold-press 0 200 lctl (layer-while-held km-x)) lctl (lsft rsft rctl lalt ralt lmet rmet))");
+        assert_eq!(chord_action("km-x", &["lctl".into(), "tab".into()]), "(fork (one-shot 2000 (layer-while-held km-x)) (multi lctl tab) (lsft rsft rctl lalt ralt lmet rmet))");
     }
 
     #[test]
