@@ -2,7 +2,7 @@
 //! `push-msg` pelo TCP e executa as ações. Não usa nenhum framework de UI
 //! (só Win32), por isso fica com poucos MB de RAM.
 
-use crate::{actions, clock, features, msg, paths, update, win};
+use crate::{actions, clock, features, msg, paths, update, volume, win};
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::io::{BufRead, BufReader, Write};
@@ -737,6 +737,9 @@ fn apply_features(s: &mut State) {
     if let Err(e) = clock::set_enabled(f.clock) {
         balloon(s.hwnd, "Relógio na tela", &e, true);
     }
+    if let Err(e) = volume::set_enabled(f.volume_wheel) {
+        balloon(s.hwnd, "Volume com Shift + roda", &e, true);
+    }
 }
 
 fn drain_events() {
@@ -790,6 +793,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
         }
         WM_DESTROY => {
             let _ = clock::set_enabled(false);
+            let _ = volume::set_enabled(false);
             with(|s| {
                 stop_kanata(s);
                 let n = nid(s.hwnd);

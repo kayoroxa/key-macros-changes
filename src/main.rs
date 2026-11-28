@@ -28,6 +28,7 @@ mod remap;
 mod scancode;
 mod theme;
 mod update;
+mod volume;
 mod win;
 
 fn attach_console() {

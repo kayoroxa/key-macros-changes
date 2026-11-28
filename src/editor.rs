@@ -58,6 +58,30 @@ fn clock_illustration(ui: &mut Ui) {
     p.add(egui::Shape::convex_polygon(vec![t, t + vec2(0.0, 13.0), t + vec2(9.0, 9.0)], Color32::WHITE, Stroke::new(1.0, Color32::BLACK)));
 }
 
+/// Miniatura: barrinha de volume com a porcentagem, ao lado do cursor.
+fn volume_illustration(ui: &mut Ui) {
+    let (r, _) = ui.allocate_exact_size(vec2(230.0, 140.0), Sense::hover());
+    let p = ui.painter_at(r);
+    p.rect(r, 10, th::FIELD, Stroke::new(1.0, th::BORDER_HI), StrokeKind::Inside);
+    let card = Rect::from_min_size(pos2(r.center().x + 4.0, r.top() + 14.0), vec2(36.0, 110.0));
+    p.rect(card, 3, Color32::WHITE, Stroke::new(1.0, Color32::GRAY), StrokeKind::Inside);
+    p.text(pos2(card.center().x, card.top() + 10.0), Align2::CENTER_CENTER, "55%", th::regular(10.0), Color32::BLACK);
+    let (top, bot) = (card.top() + 24.0, card.bottom() - 8.0);
+    let cx = card.center().x;
+    let blue = Color32::from_rgb(0, 120, 215);
+    p.line_segment([pos2(cx, top), pos2(cx, bot)], Stroke::new(3.0, Color32::from_gray(220)));
+    let lvl = bot - (bot - top) * 0.55;
+    p.line_segment([pos2(cx, lvl), pos2(cx, bot)], Stroke::new(3.0, blue));
+    p.rect_filled(Rect::from_center_size(pos2(cx, lvl), vec2(14.0, 6.0)), 1, blue);
+    // cursor + "Shift" + setinhas da roda
+    let t = pos2(card.left() - 34.0, r.center().y - 8.0);
+    p.add(egui::Shape::convex_polygon(vec![t, t + vec2(0.0, 13.0), t + vec2(9.0, 9.0)], Color32::WHITE, Stroke::new(1.0, Color32::BLACK)));
+    let k = Rect::from_min_size(pos2(r.left() + 14.0, r.bottom() - 30.0), vec2(44.0, 18.0));
+    p.rect(k, 4, th::CARD, Stroke::new(1.0, th::ACCENT), StrokeKind::Inside);
+    p.text(k.center(), Align2::CENTER_CENTER, "Shift", th::regular(10.0), th::TEXT);
+    p.text(pos2(k.right() + 6.0, k.center().y), Align2::LEFT_CENTER, "+ roda do mouse", th::regular(10.0), th::ACCENT_HI);
+}
+
 /// largura da coluna "Ao tocar" / "Ao segurar por" (alinha os seletores)
 const HEAD_W: f32 = 250.0;
 
@@ -2994,7 +3018,7 @@ impl Editor {
             th::section().show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 ui.heading("Recursos");
-                ui.label(RichText::new("Funções extras do KeyMacros. Todas vêm desativadas: ligue só as que quiser.").color(th::WEAK));
+                ui.label(RichText::new("Funções extras do KeyMacros. Ligue só as que quiser.").color(th::WEAK));
             });
             ui.add_space(12.0);
             th::section().show(ui, |ui| {
@@ -3044,6 +3068,41 @@ impl Editor {
                     clock_illustration(ui);
                 });
             });
+            ui.add_space(12.0);
+            th::section().show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.horizontal(|ui| {
+                    ui.heading("Volume com Shift + roda do mouse");
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        let mut on = self.features.volume_wheel;
+                        if th::toggle(ui, &mut on).changed() {
+                            self.features.volume_wheel = on;
+                            self.save_features();
+                        }
+                        let (txt, c) = if on { ("Ligado", th::GREEN) } else { ("Desligado", th::WEAK) };
+                        ui.label(RichText::new(txt).color(c));
+                    });
+                });
+                ui.add_space(10.0);
+                ui.horizontal_top(|ui| {
+                    ui.vertical(|ui| {
+                        ui.set_max_width(400.0);
+                        for line in [
+                            "Segure Shift e gire a roda do mouse: para cima aumenta, para baixo diminui o volume do Windows (2% por clique da roda).",
+                            "Aparece uma barrinha com a porcentagem perto do mouse. Ela some sozinha depois de um tempo sem mexer.",
+                            "Enquanto o Shift estiver segurado, a roda não rola a janela embaixo.",
+                            "Se o som estiver no mudo, mexer no volume tira o mudo.",
+                        ] {
+                            ui.label(RichText::new(format!("•  {line}")).color(th::TEXT));
+                            ui.add_space(4.0);
+                        }
+                        ui.add_space(6.0);
+                        ui.label(RichText::new("Vem ligado por padrão. Funciona enquanto o KeyMacros estiver rodando, mesmo com o teclado pausado.").color(th::WEAK).small());
+                    });
+                    ui.add_space(24.0);
+                    volume_illustration(ui);
+                });
+            });
             if let Some(m) = &self.feat_status {
                 ui.add_space(8.0);
                 ui.label(RichText::new(m).color(th::WEAK));
@@ -3057,7 +3116,7 @@ impl Editor {
             Ok(()) => {
                 let h = daemon::find_daemon();
                 if h.is_null() {
-                    "Salvo. O relógio aparece quando o KeyMacros estiver rodando.".to_string()
+                    "Salvo. Vale quando o KeyMacros estiver rodando.".to_string()
                 } else {
                     unsafe { windows_sys::Win32::UI::WindowsAndMessaging::PostMessageW(h, daemon::WM_KM_FEATURES, 0, 0) };
                     "Salvo e aplicado.".to_string()
