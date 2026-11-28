@@ -85,7 +85,26 @@ enum Kind {
     Run,
     Text,
     Keys,
+    Media,
     Raw,
+}
+
+/// Teclas de mídia nativas do Windows (nomes do kanata) — funcionam em qualquer app.
+const MEDIA: &[(&str, &str, &str)] = &[
+    ("pp", "Tocar/pausar", icon::PLAY),
+    ("next", "Próxima música", icon::NEXT),
+    ("prev", "Música anterior", icon::PREV),
+    ("volu", "Aumentar volume", icon::VOLUME),
+    ("vold", "Diminuir volume", icon::VOLUME),
+    ("mute", "Mudo", icon::MUTE),
+];
+
+fn media_of(k: &str) -> Option<&'static (&'static str, &'static str, &'static str)> {
+    let k = match k.trim() {
+        "voldwn" => "vold",
+        k => k,
+    };
+    MEDIA.iter().find(|m| m.0 == k)
 }
 
 const KINDS: &[(Kind, &str)] = &[
@@ -94,6 +113,7 @@ const KINDS: &[(Kind, &str)] = &[
     (Kind::Run, "Executar comando"),
     (Kind::Text, "Digitar texto"),
     (Kind::Keys, "Enviar teclas/atalho"),
+    (Kind::Media, "Controlar música"),
     (Kind::Raw, "Código kanata (avançado)"),
     (Kind::Nothing, "Nada (bloquear)"),
 ];
@@ -105,6 +125,7 @@ fn kind_ico(k: Kind) -> (&'static str, Color32) {
         Kind::Run => (icon::CUBE, ORANGE),
         Kind::Text => (icon::FONT, VIOLET),
         Kind::Keys => (icon::KEYBOARD, th::WEAK),
+        Kind::Media => (icon::MUSIC, th::GREEN),
         Kind::Raw => (icon::CODE, CYAN),
         Kind::Nothing => (icon::BLOCKED, th::WEAK),
     }
@@ -124,6 +145,7 @@ struct ActForm {
     cmd_args: String,
     text: String,
     keys: String,
+    media: String,
     raw: String,
     /// popup "gravar atalho" aberto
     rec: bool,
@@ -145,6 +167,7 @@ impl Default for ActForm {
             cmd_args: String::new(),
             text: String::new(),
             keys: String::new(),
+            media: "pp".into(),
             raw: String::new(),
             rec: false,
             rec_buf: String::new(),
@@ -179,6 +202,10 @@ impl ActForm {
                 f.kind = Kind::Text;
                 f.text = t.clone();
             }
+            Act::Keys(k) if media_of(k).is_some() => {
+                f.kind = Kind::Media;
+                f.media = media_of(k).unwrap().0.to_string();
+            }
             Act::Keys(k) => {
                 f.kind = Kind::Keys;
                 f.keys = k.clone();
@@ -199,6 +226,7 @@ impl ActForm {
             Kind::Run => Act::Run { cmd: self.cmd.clone(), args: self.cmd_args.clone() },
             Kind::Text => Act::Text(self.text.clone()),
             Kind::Keys => Act::Keys(self.keys.clone()),
+            Kind::Media => Act::Keys(self.media.clone()),
             Kind::Raw => Act::Raw(self.raw.clone()),
         }
     }
@@ -537,7 +565,10 @@ fn act_view(icons: &mut IconCache, ctx: &egui::Context, windows: &[win::WinInfo]
             (title, ico)
         }
         Act::Text(t) => (format!("“{t}”"), glyph(Kind::Text)),
-        Act::Keys(k) => (pretty_keys(k), glyph(Kind::Keys)),
+        Act::Keys(k) => match media_of(k) {
+            Some((_, t, g)) => (t.to_string(), Ico::Glyph(g, th::GREEN)),
+            None => (pretty_keys(k), glyph(Kind::Keys)),
+        },
         Act::Raw(r) => {
             let cmd = r.split("push-msg").nth(1).and_then(|s| s.split_whitespace().next()).map(|s| s.trim_matches(['(', ')', '"']).to_string()).unwrap_or_default();
             let named = match cmd.as_str() {
@@ -669,7 +700,7 @@ fn binding_short(b: &Binding) -> String {
     }
     match &b.tap {
         Act::App { exe, .. } => exe.clone(),
-        Act::Keys(k) => key_label(k),
+        Act::Keys(k) => media_of(k).map(|m| m.1.to_string()).unwrap_or_else(|| key_label(k)),
         Act::Text(t) => format!("texto \"{}\"", t.chars().take(20).collect::<String>()),
         Act::Run { cmd, .. } => cmd.clone(),
         Act::Site { .. } => "site".into(),
@@ -975,6 +1006,23 @@ fn act_row(ui: &mut Ui, id: &str, enabled: bool, head: impl FnOnce(&mut Ui), f: 
                     f.rec_buf.clear();
                 }
                 let w = (ui.available_width() - 95.0).max(80.0);
+                if f.kind == Kind::Media {
+                    ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                        let (g, label) = media_of(&f.media).map(|m| (m.2, m.1)).unwrap_or((icon::MUSIC, "?"));
+                        egui::ComboBox::from_id_salt(format!("{id}-media"))
+                            .width(270.0)
+                            .icon(th::chevron)
+                            .selected_text(th::icon_job(g, label, th::regular(15.0), th::TEXT, th::GREEN))
+                            .show_ui(ui, |ui| {
+                                for (k, label, g) in MEDIA {
+                                    if ui.selectable_label(f.media == *k, th::icon_job(g, label, th::regular(15.0), th::TEXT, th::GREEN)).clicked() {
+                                        f.media = k.to_string();
+                                    }
+                                }
+                            });
+                        ui.label(RichText::new("funciona em qualquer app").color(th::WEAK));
+                    });
+                } else {
                 match main_field(f) {
                     Some((label, text, hint, mono)) => {
                         field(ui, text, hint, mono, w);
@@ -986,6 +1034,7 @@ fn act_row(ui: &mut Ui, id: &str, enabled: bool, head: impl FnOnce(&mut Ui), f: 
                             ui.label(RichText::new(msg).color(th::WEAK));
                         });
                     }
+                }
                 }
             });
         });

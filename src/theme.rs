@@ -55,6 +55,11 @@ pub mod icon {
     pub const FONT: &str = "\u{E8D2}";
     pub const POWER: &str = "\u{E7E8}";
     pub const CHEVRON: &str = "\u{E70D}";
+    pub const MUSIC: &str = "\u{E8D6}";
+    pub const NEXT: &str = "\u{E893}";
+    pub const PREV: &str = "\u{E892}";
+    pub const VOLUME: &str = "\u{E767}";
+    pub const MUTE: &str = "\u{E74F}";
 }
 
 // ------------------------------------------------------------------ fontes e estilo
